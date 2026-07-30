@@ -302,6 +302,34 @@ a {
   gap: 8px;
 }
 
+
+.toolbar-search {
+  display: flex;
+  align-items: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  padding: 6px 12px;
+  gap: 8px;
+  min-width: 200px;
+}
+.toolbar-search-input {
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  width: 100%;
+}
+.toolbar-search-input::placeholder {
+  color: var(--text-tertiary);
+}
+.toolbar-search-icon {
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+}
+
 .toolbar-btn {
   display: inline-flex;
   align-items: center;

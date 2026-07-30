@@ -76,12 +76,13 @@ export function FileList({
           <div className="file-row-name header-label sortable" onClick={() => onSort('name')}>
             Name <SortIndicator column="name" />
           </div>
+          <div className="file-row-date header-label sortable" onClick={() => onSort('date')}>
+            Date Modified <SortIndicator column="date" />
+          </div>
           <div className="file-row-size header-label sortable" onClick={() => onSort('size')}>
             Size <SortIndicator column="size" />
           </div>
-          <div className="file-row-actions header-label sortable" onClick={() => onSort('date')}>
-            Date Modified <SortIndicator column="date" />
-          </div>
+          <div className="file-row-actions header-label"></div>
         </div>
       )}
 
