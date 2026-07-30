@@ -24,8 +24,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Filename is required' }, { status: 400 });
     }
 
-    // Prefix with user email (or secret code) to enforce strict isolation in R2
-    const key = `${auth.value}/${filename}`;
+    // Prefix with user email to enforce strict isolation in R2, avoid duplicating if already present
+    const key = filename.startsWith(auth.value + '/') || filename === auth.value
+      ? filename
+      : `${auth.value}/${filename}`;
 
     const command = new PutObjectCommand({
       Bucket: process.env.R2_BUCKET_NAME || 'datakeeper',

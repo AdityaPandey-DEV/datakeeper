@@ -27,7 +27,8 @@ export function Breadcrumb({ path }: BreadcrumbProps) {
             datakeeper
           </Link>
         </li>
-        {segments.map((segment, index) => {
+        {segments.slice(1).map((segment, idx) => {
+          const index = idx + 1; // actual index in original array
           const segmentPath = '/browse/' + segments.slice(0, index + 1).join('/');
           const isLast = index === segments.length - 1;
 
