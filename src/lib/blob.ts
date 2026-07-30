@@ -1,19 +1,47 @@
-import { list, put, del, copy } from '@vercel/blob';
+import {
+  S3Client,
+  ListObjectsV2Command,
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  CopyObjectCommand,
+  PutObjectCommand,
+} from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 
-/**
- * Get the Blob token from environment variables.
- * Supports both BLOB_READ_WRITE_TOKEN and VERCEL_BLOB_READ_WRITE_TOKEN.
- */
-function getToken(): string {
-  const token =
-    process.env.BLOB_READ_WRITE_TOKEN ||
-    process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
-  if (!token) {
-    throw new Error(
-      'Missing BLOB_READ_WRITE_TOKEN. Please add it to your Vercel project environment variables.'
-    );
+// Ensure the S3 client can be configured with environment variables
+function getS3Client() {
+  const accountId =
+    process.env.R2_ENDPOINT?.split('https://')[1]?.split('.')[0];
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+  const endpoint = process.env.R2_ENDPOINT;
+
+  if (!accessKeyId || !secretAccessKey || !endpoint) {
+    throw new Error('Missing Cloudflare R2 environment variables.');
   }
-  return token;
+
+  return new S3Client({
+    region: 'auto',
+    endpoint: endpoint,
+    credentials: {
+      accessKeyId: accessKeyId,
+      secretAccessKey: secretAccessKey,
+    },
+  });
+}
+
+function getBucketName() {
+  return process.env.R2_BUCKET_NAME || 'datakeeper';
+}
+
+function getPublicUrl(key: string) {
+  const baseUrl = process.env.R2_PUBLIC_URL || '';
+  // Ensure base URL ends with a slash and key doesn't start with one
+  const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
+  const cleanKey = key.startsWith('/') ? key.substring(1) : key;
+  // Encode the key parts but leave slashes intact
+  const encodedKey = cleanKey.split('/').map(encodeURIComponent).join('/');
+  return cleanBaseUrl + encodedKey;
 }
 
 export interface FileItem {
@@ -28,67 +56,64 @@ export interface FileItem {
 
 /**
  * List all files and folders at a given path prefix.
- * Parses Vercel Blob's flat namespace into a folder structure.
  */
 export async function listFolder(prefix: string): Promise<FileItem[]> {
   const normalizedPrefix = prefix ? (prefix.endsWith('/') ? prefix : prefix + '/') : '';
-
   const items: FileItem[] = [];
-  const seenFolders = new Set<string>();
+  const s3 = getS3Client();
+  const bucket = getBucketName();
 
-  let cursor: string | undefined;
-  let hasMore = true;
+  let continuationToken: string | undefined = undefined;
 
-  while (hasMore) {
-    const response = await list({
-      prefix: normalizedPrefix,
-      cursor,
-      limit: 1000,
-      token: getToken(),
+  do {
+    const command: ListObjectsV2Command = new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: normalizedPrefix,
+      Delimiter: '/', // Delimiter makes S3 group items into common prefixes (folders)
+      ContinuationToken: continuationToken,
     });
 
-    for (const blob of response.blobs) {
-      // Get the relative path after the prefix
-      const relativePath = blob.pathname.slice(normalizedPrefix.length);
+    const response = await s3.send(command);
 
-      if (!relativePath) continue;
-
-      // Check if this blob is in a subfolder
-      const slashIndex = relativePath.indexOf('/');
-
-      if (slashIndex !== -1) {
-        // This is inside a subfolder
-        const folderName = relativePath.slice(0, slashIndex);
-        const folderPath = normalizedPrefix + folderName;
-
-        if (!seenFolders.has(folderPath)) {
-          seenFolders.add(folderPath);
-          items.push({
-            name: folderName,
-            type: 'folder',
-            path: folderPath,
-          });
-        }
-      } else {
-        // This is a direct file in this folder
-        // Skip .keep files (folder markers)
-        if (relativePath === '.keep') continue;
-
+    // Add folders (CommonPrefixes)
+    if (response.CommonPrefixes) {
+      for (const commonPrefix of response.CommonPrefixes) {
+        if (!commonPrefix.Prefix) continue;
+        const folderPath = commonPrefix.Prefix;
+        // Get the folder name (part before the last slash)
+        const name = folderPath.slice(normalizedPrefix.length, -1);
+        
         items.push({
-          name: relativePath,
-          type: 'file',
-          path: blob.pathname,
-          url: blob.url,
-          size: blob.size,
-          uploadedAt: new Date(blob.uploadedAt),
-          contentType: undefined,
+          name: name,
+          type: 'folder',
+          path: folderPath,
         });
       }
     }
 
-    hasMore = response.hasMore;
-    cursor = response.cursor;
-  }
+    // Add files
+    if (response.Contents) {
+      for (const obj of response.Contents) {
+        if (!obj.Key) continue;
+        const relativePath = obj.Key.slice(normalizedPrefix.length);
+
+        // Skip root markers or .keep files
+        if (relativePath === '' || relativePath === '.keep') continue;
+
+        items.push({
+          name: relativePath,
+          type: 'file',
+          path: obj.Key,
+          url: getPublicUrl(obj.Key),
+          size: obj.Size,
+          uploadedAt: obj.LastModified,
+          contentType: undefined, // ContentType isn't returned in ListObjectsV2 easily
+        });
+      }
+    }
+
+    continuationToken = response.NextContinuationToken;
+  } while (continuationToken);
 
   // Sort: folders first, then files, both alphabetically
   items.sort((a, b) => {
@@ -107,21 +132,43 @@ export async function uploadFile(
   file: File | Blob,
   contentType?: string
 ): Promise<{ url: string; pathname: string }> {
-  const blob = await put(path, file, {
-    access: 'public',
-    contentType,
-    addRandomSuffix: false,
-    token: getToken(),
+  const s3 = getS3Client();
+  const bucket = getBucketName();
+  
+  // Use Upload utility which handles multipart uploads transparently
+  const upload = new Upload({
+    client: s3,
+    params: {
+      Bucket: bucket,
+      Key: path,
+      Body: file,
+      ContentType: contentType || file.type || 'application/octet-stream',
+    },
   });
 
-  return { url: blob.url, pathname: blob.pathname };
+  await upload.done();
+
+  return { url: getPublicUrl(path), pathname: path };
 }
 
 /**
  * Delete a file by its URL.
+ * URL format: https://pub-xyz.r2.dev/path/to/file.mp4
  */
 export async function deleteFile(url: string): Promise<void> {
-  await del(url, { token: getToken() });
+  const baseUrl = process.env.R2_PUBLIC_URL || '';
+  if (!url.startsWith(baseUrl)) return;
+  
+  const key = decodeURIComponent(url.slice(baseUrl.length + (baseUrl.endsWith('/') ? 0 : 1)));
+  if (!key) return;
+
+  const s3 = getS3Client();
+  await s3.send(
+    new DeleteObjectCommand({
+      Bucket: getBucketName(),
+      Key: key,
+    })
+  );
 }
 
 /**
@@ -129,7 +176,29 @@ export async function deleteFile(url: string): Promise<void> {
  */
 export async function deleteFiles(urls: string[]): Promise<void> {
   if (urls.length === 0) return;
-  await del(urls, { token: getToken() });
+  const baseUrl = process.env.R2_PUBLIC_URL || '';
+  const s3 = getS3Client();
+  const bucket = getBucketName();
+  
+  const keys = urls
+    .filter(url => url.startsWith(baseUrl))
+    .map(url => decodeURIComponent(url.slice(baseUrl.length + (baseUrl.endsWith('/') ? 0 : 1))))
+    .filter(key => key.length > 0);
+
+  if (keys.length === 0) return;
+
+  // Batch delete in chunks of 1000 (S3 max limit per request)
+  for (let i = 0; i < keys.length; i += 1000) {
+    const chunk = keys.slice(i, i + 1000);
+    await s3.send(
+      new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: {
+          Objects: chunk.map(key => ({ Key: key })),
+        },
+      })
+    );
+  }
 }
 
 /**
@@ -137,11 +206,15 @@ export async function deleteFiles(urls: string[]): Promise<void> {
  */
 export async function createFolder(path: string): Promise<void> {
   const folderPath = path.endsWith('/') ? path : path + '/';
-  await put(folderPath + '.keep', new Blob(['']), {
-    access: 'public',
-    addRandomSuffix: false,
-    token: getToken(),
-  });
+  const s3 = getS3Client();
+  
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: getBucketName(),
+      Key: folderPath + '.keep',
+      Body: '', // Empty body
+    })
+  );
 }
 
 /**
@@ -149,33 +222,37 @@ export async function createFolder(path: string): Promise<void> {
  */
 export async function deleteFolder(prefix: string): Promise<void> {
   const normalizedPrefix = prefix.endsWith('/') ? prefix : prefix + '/';
-  const urls: string[] = [];
+  const s3 = getS3Client();
+  const bucket = getBucketName();
+  let continuationToken: string | undefined = undefined;
 
-  let cursor: string | undefined;
-  let hasMore = true;
+  do {
+    const response = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: normalizedPrefix,
+        ContinuationToken: continuationToken,
+      })
+    );
 
-  while (hasMore) {
-    const response = await list({
-      prefix: normalizedPrefix,
-      cursor,
-      limit: 1000,
-      token: getToken(),
-    });
-
-    for (const blob of response.blobs) {
-      urls.push(blob.url);
+    if (response.Contents && response.Contents.length > 0) {
+      const keys = response.Contents.map(obj => obj.Key).filter(k => k) as string[];
+      
+      // Batch delete
+      for (let i = 0; i < keys.length; i += 1000) {
+        const chunk = keys.slice(i, i + 1000);
+        await s3.send(
+          new DeleteObjectsCommand({
+            Bucket: bucket,
+            Delete: {
+              Objects: chunk.map(key => ({ Key: key })),
+            },
+          })
+        );
+      }
     }
-
-    hasMore = response.hasMore;
-    cursor = response.cursor;
-  }
-
-  if (urls.length > 0) {
-    // Delete in batches of 1000
-    for (let i = 0; i < urls.length; i += 1000) {
-      await del(urls.slice(i, i + 1000), { token: getToken() });
-    }
-  }
+    continuationToken = response.NextContinuationToken;
+  } while (continuationToken);
 }
 
 /**
@@ -185,15 +262,31 @@ export async function moveFile(
   sourceUrl: string,
   destinationPath: string
 ): Promise<{ url: string; pathname: string }> {
-  const blob = await copy(sourceUrl, destinationPath, {
-    access: 'public',
-    addRandomSuffix: false,
-    token: getToken(),
-  });
+  const baseUrl = process.env.R2_PUBLIC_URL || '';
+  if (!sourceUrl.startsWith(baseUrl)) throw new Error('Invalid source URL');
+  
+  const sourceKey = decodeURIComponent(sourceUrl.slice(baseUrl.length + (baseUrl.endsWith('/') ? 0 : 1)));
+  const s3 = getS3Client();
+  const bucket = getBucketName();
 
-  await del(sourceUrl, { token: getToken() });
+  // Copy
+  await s3.send(
+    new CopyObjectCommand({
+      Bucket: bucket,
+      CopySource: `${bucket}/${encodeURIComponent(sourceKey)}`,
+      Key: destinationPath,
+    })
+  );
 
-  return { url: blob.url, pathname: blob.pathname };
+  // Delete
+  await s3.send(
+    new DeleteObjectCommand({
+      Bucket: bucket,
+      Key: sourceKey,
+    })
+  );
+
+  return { url: getPublicUrl(destinationPath), pathname: destinationPath };
 }
 
 /**
@@ -205,45 +298,46 @@ export async function moveFolder(
 ): Promise<void> {
   const normalizedSource = sourcePrefix.endsWith('/') ? sourcePrefix : sourcePrefix + '/';
   const normalizedDest = destinationPrefix.endsWith('/') ? destinationPrefix : destinationPrefix + '/';
+  
+  const s3 = getS3Client();
+  const bucket = getBucketName();
+  let continuationToken: string | undefined = undefined;
 
-  let cursor: string | undefined;
-  let hasMore = true;
-  const operations: { url: string; newPath: string }[] = [];
+  do {
+    const response = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: normalizedSource,
+        ContinuationToken: continuationToken,
+      })
+    );
 
-  while (hasMore) {
-    const response = await list({
-      prefix: normalizedSource,
-      cursor,
-      limit: 1000,
-      token: getToken(),
-    });
+    if (response.Contents) {
+      for (const obj of response.Contents) {
+        if (!obj.Key) continue;
+        const relativePath = obj.Key.slice(normalizedSource.length);
+        const destinationPath = normalizedDest + relativePath;
 
-    for (const blob of response.blobs) {
-      const relativePath = blob.pathname.slice(normalizedSource.length);
-      operations.push({
-        url: blob.url,
-        newPath: normalizedDest + relativePath,
-      });
+        // Copy
+        await s3.send(
+          new CopyObjectCommand({
+            Bucket: bucket,
+            CopySource: `${bucket}/${encodeURIComponent(obj.Key)}`,
+            Key: destinationPath,
+          })
+        );
+
+        // Delete
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: bucket,
+            Key: obj.Key,
+          })
+        );
+      }
     }
-
-    hasMore = response.hasMore;
-    cursor = response.cursor;
-  }
-
-  // Copy all files to new location
-  for (const op of operations) {
-    await copy(op.url, op.newPath, {
-      access: 'public',
-      addRandomSuffix: false,
-      token: getToken(),
-    });
-  }
-
-  // Delete all old files
-  const urls = operations.map(op => op.url);
-  for (let i = 0; i < urls.length; i += 1000) {
-    await del(urls.slice(i, i + 1000), { token: getToken() });
-  }
+    continuationToken = response.NextContinuationToken;
+  } while (continuationToken);
 }
 
 /**
@@ -268,24 +362,31 @@ export async function getAllFolders(): Promise<string[]> {
   const folders = new Set<string>();
   folders.add(''); // root
 
-  let cursor: string | undefined;
-  let hasMore = true;
+  const s3 = getS3Client();
+  const bucket = getBucketName();
+  let continuationToken: string | undefined = undefined;
 
-  while (hasMore) {
-    const response = await list({ cursor, limit: 1000, token: getToken() });
+  do {
+    const response = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        ContinuationToken: continuationToken,
+      })
+    );
 
-    for (const blob of response.blobs) {
-      const parts = blob.pathname.split('/');
-      // Build all parent folder paths
-      for (let i = 1; i < parts.length; i++) {
-        const folderPath = parts.slice(0, i).join('/');
-        folders.add(folderPath);
+    if (response.Contents) {
+      for (const obj of response.Contents) {
+        if (!obj.Key) continue;
+        const parts = obj.Key.split('/');
+        // Build all parent folder paths
+        for (let i = 1; i < parts.length; i++) {
+          const folderPath = parts.slice(0, i).join('/');
+          folders.add(folderPath);
+        }
       }
     }
-
-    hasMore = response.hasMore;
-    cursor = response.cursor;
-  }
+    continuationToken = response.NextContinuationToken;
+  } while (continuationToken);
 
   return Array.from(folders).sort();
 }

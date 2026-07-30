@@ -13,6 +13,8 @@
     "optimize:remote": "npx tsx scripts/optimize-remote.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1098.0",
+    "@aws-sdk/lib-storage": "^3.1098.0",
     "@vercel/blob": "^2.6.1",
     "next": "16.2.12",
     "react": "19.2.4",

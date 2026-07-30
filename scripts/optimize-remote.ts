@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { list, put } from '@vercel/blob';
+import { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 
 let ffmpegPath: string | null = null;
 try {
@@ -13,13 +14,9 @@ try {
 const CONCURRENCY = 4;
 const CACHE_FILE = path.resolve(__dirname, '../.optimized-cache.json');
 
-// Load/save cache of already-optimized video pathnames
 function loadCache(): Set<string> {
   try {
-    if (fs.existsSync(CACHE_FILE)) {
-      const data = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8'));
-      return new Set(data);
-    }
+    if (fs.existsSync(CACHE_FILE)) return new Set(JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8')));
   } catch {}
   return new Set();
 }
@@ -48,8 +45,28 @@ function loadEnvLocal() {
 
 loadEnvLocal();
 
-const TOKEN = process.env.BLOB_READ_WRITE_TOKEN || process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
-if (!TOKEN) { console.error('❌ BLOB_READ_WRITE_TOKEN not set.'); process.exit(1); }
+const accountId = process.env.R2_ENDPOINT?.split('https://')[1]?.split('.')[0];
+const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+const endpoint = process.env.R2_ENDPOINT;
+const bucketName = process.env.R2_BUCKET_NAME || 'datakeeper';
+const publicUrl = process.env.R2_PUBLIC_URL || '';
+
+if (!accessKeyId || !secretAccessKey || !endpoint) {
+  console.error('❌ Missing Cloudflare R2 credentials.');
+  process.exit(1);
+}
+
+const s3 = new S3Client({
+  region: 'auto',
+  endpoint: endpoint,
+  credentials: { accessKeyId, secretAccessKey },
+});
+
+function getPublicUrl(key: string) {
+  const baseUrl = publicUrl.endsWith('/') ? publicUrl : publicUrl + '/';
+  return baseUrl + key.split('/').map(encodeURIComponent).join('/');
+}
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -75,26 +92,28 @@ async function main() {
   const cache = loadCache();
   const forceAll = process.argv.includes('--force');
 
-  console.log('🔍 Listing all videos in DataKeeper cloud...');
-  let cursor: string | undefined;
-  let hasMore = true;
+  console.log('🔍 Listing all videos in Cloudflare R2...');
+  let continuationToken: string | undefined;
   const allVideos: { url: string; pathname: string; size: number }[] = [];
 
-  while (hasMore) {
-    const r = await list({ cursor, limit: 1000, token: TOKEN });
-    for (const b of r.blobs) if (isVideoFile(b.pathname)) allVideos.push({ url: b.url, pathname: b.pathname, size: b.size });
-    hasMore = r.hasMore;
-    cursor = r.cursor;
-  }
+  do {
+    const r = await s3.send(new ListObjectsV2Command({ Bucket: bucketName, ContinuationToken: continuationToken }));
+    if (r.Contents) {
+      for (const b of r.Contents) {
+        if (b.Key && isVideoFile(b.Key)) {
+          allVideos.push({ url: getPublicUrl(b.Key), pathname: b.Key, size: b.Size || 0 });
+        }
+      }
+    }
+    continuationToken = r.NextContinuationToken;
+  } while (continuationToken);
 
-  // Filter out already-optimized videos (unless --force)
   const videos = forceAll ? allVideos : allVideos.filter(v => !cache.has(v.pathname));
   const skipped = allVideos.length - videos.length;
 
   console.log(`📊 Found ${allVideos.length} video(s) total, ${skipped} already optimized, ${videos.length} to fix.`);
   if (videos.length === 0) {
     console.log('✅ All videos are already optimized! Nothing to do.');
-    console.log('   (Use --force to re-optimize everything)');
     return;
   }
   console.log(`⚡ ${CONCURRENCY} parallel workers | CRF 23 visually-lossless compression\n`);
@@ -108,13 +127,11 @@ async function main() {
     const tmpOut = path.join('/tmp', `opt_${uid}.mp4`);
 
     try {
-      // Download
-      console.log(`${tag} 📥 Downloading...`);
+      console.log(`${tag} 📥 Downloading from R2...`);
       const res = await fetch(blob.url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       fs.writeFileSync(tmpIn, Buffer.from(await res.arrayBuffer()));
 
-      // Compress (CRF 23 = visually lossless, veryfast = fast + good compression)
       console.log(`${tag} 🎬 Compressing (CRF 23, veryfast, +faststart)...`);
       try {
         execFileSync(ffmpegPath, [
@@ -133,7 +150,6 @@ async function main() {
 
       const newSize = fs.statSync(tmpOut).size;
 
-      // Safety: never inflate — fall back to remux
       if (newSize >= blob.size) {
         console.log(`${tag} ✨ Already compact. Applying FastStart for web streaming...`);
         execFileSync(ffmpegPath, [
@@ -144,14 +160,18 @@ async function main() {
         console.log(`${tag} ✨ Compressed: ${formatSize(blob.size)} → ${formatSize(newSize)} (${pct}% smaller!)`);
       }
 
-      // Upload
-      console.log(`${tag} 📤 Uploading...`);
-      await put(blob.pathname, fs.readFileSync(tmpOut), {
-        access: 'public', addRandomSuffix: false, allowOverwrite: true,
-        contentType: 'video/mp4', token: TOKEN,
+      console.log(`${tag} 📤 Uploading back to R2...`);
+      const upload = new Upload({
+        client: s3,
+        params: {
+          Bucket: bucketName,
+          Key: blob.pathname,
+          Body: fs.createReadStream(tmpOut),
+          ContentType: 'video/mp4',
+        },
       });
+      await upload.done();
 
-      // Mark as optimized in cache
       cache.add(blob.pathname);
       saveCache(cache);
 
@@ -164,7 +184,7 @@ async function main() {
     }
   });
 
-  console.log('🎉 All unoptimized cloud videos have been compressed & fixed for web playback!');
+  console.log('🎉 All unoptimized R2 videos have been compressed & fixed!');
 }
 
 main().catch(e => { console.error('Fatal:', e); process.exit(1); });

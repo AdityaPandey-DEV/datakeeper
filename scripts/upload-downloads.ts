@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { put } from '@vercel/blob';
+import { S3Client } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 
 let ffmpegPath: string | null = null;
 try {
@@ -32,11 +33,26 @@ function loadEnvLocal() {
 
 loadEnvLocal();
 
-const TOKEN = process.env.BLOB_READ_WRITE_TOKEN || process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
-if (!TOKEN) {
-  console.error('❌ BLOB_READ_WRITE_TOKEN is not set.');
+const accountId = process.env.R2_ENDPOINT?.split('https://')[1]?.split('.')[0];
+const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+const endpoint = process.env.R2_ENDPOINT;
+const bucketName = process.env.R2_BUCKET_NAME || 'datakeeper';
+const publicUrl = process.env.R2_PUBLIC_URL || '';
+
+if (!accessKeyId || !secretAccessKey || !endpoint) {
+  console.error('❌ Missing R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, or R2_ENDPOINT.');
   process.exit(1);
 }
+
+const s3 = new S3Client({
+  region: 'auto',
+  endpoint: endpoint,
+  credentials: {
+    accessKeyId,
+    secretAccessKey,
+  },
+});
 
 const DOWNLOADS_DIR = path.resolve(process.env.HOME || '/Users/adityapandeydev', 'Downloads');
 const REMOTE_PREFIX = 'Course-Uploads/';
@@ -81,17 +97,6 @@ function getContentType(f: string): string {
   return map[path.extname(f).toLowerCase()] || 'application/octet-stream';
 }
 
-/**
- * Compress video with ZERO visible quality loss.
- *
- * Strategy:
- *   1. Re-encode with libx264 CRF 23 (visually lossless) + veryfast preset + faststart.
- *      Screen recordings from Telegram are often encoded with very high bitrates or
- *      inefficient codecs, so CRF 23 re-encode shrinks them 50-70% with no visible
- *      difference on code/text content.
- *   2. If re-encoding somehow makes the file bigger (already well-compressed), fall back
- *      to instant FastStart remux (-c copy) so the file is NEVER inflated.
- */
 function optimizeVideo(inputPath: string, tag: string): { uploadPath: string; isTemporary: boolean } {
   if (!ffmpegPath) {
     console.log(`${tag} ⚠️  FFmpeg not available — uploading original.`);
@@ -102,7 +107,6 @@ function optimizeVideo(inputPath: string, tag: string): { uploadPath: string; is
   const tempOut = path.join('/tmp', `opt_${uid}.mp4`);
   const origSize = fs.statSync(inputPath).size;
 
-  // Step 1: Compress (CRF 23 = visually lossless, veryfast = fast + good compression)
   console.log(`${tag} 🎬 Compressing (CRF 23 visually-lossless, veryfast, +faststart)...`);
   try {
     execFileSync(ffmpegPath, [
@@ -114,7 +118,6 @@ function optimizeVideo(inputPath: string, tag: string): { uploadPath: string; is
       tempOut
     ], { stdio: 'ignore' });
   } catch {
-    // If encoding fails entirely, just remux
     console.log(`${tag} ⚠️  Encode failed — falling back to remux.`);
     try {
       execFileSync(ffmpegPath, [
@@ -129,7 +132,6 @@ function optimizeVideo(inputPath: string, tag: string): { uploadPath: string; is
 
   const newSize = fs.statSync(tempOut).size;
 
-  // Step 2: Safety — if the file got bigger, do instant remux instead (never inflate!)
   if (newSize >= origSize) {
     console.log(`${tag} ✨ Already compact (${formatSize(origSize)}). Applying FastStart for web streaming...`);
     try {
@@ -161,7 +163,7 @@ async function main() {
   if (!files.length) { console.log('✅ No files to upload.'); return; }
 
   console.log(`🚀 Found ${files.length} files → "${REMOTE_PREFIX}"`);
-  console.log(`⚡ ${CONCURRENCY} parallel workers | CRF 23 visually-lossless compression`);
+  console.log(`⚡ ${CONCURRENCY} parallel workers | Uploading to Cloudflare R2 (${bucketName})`);
   if (USE_OPTIMIZE) console.log(`🎬 Video compression ENABLED (--optimize)`);
   console.log('');
 
@@ -181,9 +183,20 @@ async function main() {
     }
 
     try {
-      const buf = fs.readFileSync(src);
       const ct = getContentType(remotePath);
-      await put(remotePath, buf, { access: 'public', addRandomSuffix: false, allowOverwrite: true, contentType: ct, token: TOKEN });
+      
+      const upload = new Upload({
+        client: s3,
+        params: {
+          Bucket: bucketName,
+          Key: remotePath,
+          Body: fs.createReadStream(src),
+          ContentType: ct,
+        },
+      });
+
+      await upload.done();
+      
       console.log(`${tag} ✅ → ${remotePath}`);
       if (tmp && fs.existsSync(src)) fs.unlinkSync(src);
       fs.unlinkSync(file.localPath);
