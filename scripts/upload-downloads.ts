@@ -97,10 +97,10 @@ function getContentType(f: string): string {
   return map[path.extname(f).toLowerCase()] || 'application/octet-stream';
 }
 
-function optimizeVideo(inputPath: string, tag: string): { uploadPath: string; isTemporary: boolean } {
+function optimizeVideo(inputPath: string, tag: string): string {
   if (!ffmpegPath) {
     console.log(`${tag} ⚠️  FFmpeg not available — uploading original.`);
-    return { uploadPath: inputPath, isTemporary: false };
+    return inputPath;
   }
 
   const uid = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -125,9 +125,8 @@ function optimizeVideo(inputPath: string, tag: string): { uploadPath: string; is
       ], { stdio: 'ignore' });
     } catch {
       if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut);
-      return { uploadPath: inputPath, isTemporary: false };
+      return inputPath;
     }
-    return { uploadPath: tempOut, isTemporary: true };
   }
 
   const newSize = fs.statSync(tempOut).size;
@@ -140,14 +139,24 @@ function optimizeVideo(inputPath: string, tag: string): { uploadPath: string; is
       ], { stdio: 'ignore' });
     } catch {
       if (fs.existsSync(tempOut)) fs.unlinkSync(tempOut);
-      return { uploadPath: inputPath, isTemporary: false };
+      return inputPath;
     }
   } else {
     const pct = ((1 - newSize / origSize) * 100).toFixed(1);
     console.log(`${tag} ✨ Compressed: ${formatSize(origSize)} → ${formatSize(newSize)} (${pct}% smaller, 0 quality loss!)`);
   }
 
-  return { uploadPath: tempOut, isTemporary: true };
+  // Replace original file with the compressed one immediately.
+  // This saves computing power because if the upload fails, the local file is already permanently shrunken!
+  const targetPath = inputPath.endsWith('.mp4') ? inputPath : inputPath.slice(0, inputPath.lastIndexOf('.')) + '.mp4';
+  
+  if (inputPath !== targetPath && fs.existsSync(inputPath)) {
+    fs.unlinkSync(inputPath);
+  }
+  
+  fs.renameSync(tempOut, targetPath);
+  
+  return targetPath;
 }
 
 async function runPool<T>(items: T[], n: number, fn: (item: T, i: number) => Promise<void>) {
@@ -173,13 +182,12 @@ async function main() {
     console.log(`${tag} 🚀 ${formatSize(file.size)}`);
 
     let src = file.localPath;
-    let tmp = false;
 
     if (USE_OPTIMIZE && isVideoFile(file.localPath)) {
-      const r = optimizeVideo(file.localPath, tag);
-      src = r.uploadPath; tmp = r.isTemporary;
-      if (tmp && !remotePath.endsWith('.mp4'))
+      src = optimizeVideo(file.localPath, tag);
+      if (!remotePath.endsWith('.mp4')) {
         remotePath = remotePath.slice(0, remotePath.lastIndexOf('.')) + '.mp4';
+      }
     }
 
     try {
@@ -198,12 +206,10 @@ async function main() {
       await upload.done();
       
       console.log(`${tag} ✅ → ${remotePath}`);
-      if (tmp && fs.existsSync(src)) fs.unlinkSync(src);
-      fs.unlinkSync(file.localPath);
+      if (fs.existsSync(src)) fs.unlinkSync(src);
       console.log(`${tag} 🗑️  Deleted local\n`);
     } catch (err: any) {
       console.error(`${tag} ❌ ${err.message}\n`);
-      if (tmp && fs.existsSync(src)) fs.unlinkSync(src);
     }
   });
 
