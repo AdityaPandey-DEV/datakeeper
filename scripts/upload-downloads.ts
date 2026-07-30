@@ -150,29 +150,42 @@ function optimizeVideo(inputPath: string, tag: string): string {
   }
 
   const targetPath = inputPath.endsWith('.mp4') ? inputPath : inputPath.slice(0, inputPath.lastIndexOf('.')) + '.mp4';
-  
+
   if (inputPath !== targetPath && fs.existsSync(inputPath)) {
     fs.unlinkSync(inputPath);
   }
-  
+
   fs.renameSync(tempOut, targetPath);
-  
+
   return targetPath;
 }
 
+
+class Mutex {
+  private mutex = Promise.resolve();
+  lock(): Promise<() => void> {
+    let begin: (unlock: () => void) => void = unlock => {};
+    this.mutex = this.mutex.then(() => new Promise(begin));
+    return new Promise(res => { begin = res; });
+  }
+}
+const folderMutex = new Mutex();
+
 async function getOrCreateFolder(pathStr: string): Promise<string | null> {
+  const unlock = await folderMutex.lock();
+  try {
   if (!pathStr || pathStr === '') return null;
   const parts = pathStr.replace(/\/$/, '').split('/');
   let currentParentId = null;
   for (const part of parts) {
-    let res = currentParentId === null
+    let res: any[] = currentParentId === null
       ? await sql`SELECT id FROM nodes WHERE parent_id IS NULL AND name = ${part} AND type = 'folder' AND user_email = ${USER_EMAIL}`
       : await sql`SELECT id FROM nodes WHERE parent_id = ${currentParentId} AND name = ${part} AND type = 'folder' AND user_email = ${USER_EMAIL}`;
-    
+
     if (res.length > 0) {
       currentParentId = res[0].id;
     } else {
-      const insertRes = await sql`
+      const insertRes: any[] = await sql`
         INSERT INTO nodes (parent_id, name, type, user_email) 
         VALUES (${currentParentId}, ${part}, 'folder', ${USER_EMAIL}) RETURNING id
       `;
@@ -180,6 +193,9 @@ async function getOrCreateFolder(pathStr: string): Promise<string | null> {
     }
   }
   return currentParentId;
+  } finally {
+    unlock();
+  }
 }
 
 async function runPool<T>(items: T[], n: number, fn: (item: T, i: number) => Promise<void>) {
@@ -215,7 +231,7 @@ async function main() {
 
     try {
       const ct = getContentType(remotePath);
-      
+
       const upload = new Upload({
         client: s3,
         params: {
@@ -227,13 +243,13 @@ async function main() {
       });
 
       await upload.done();
-      
+
       // Upsert to DB
       const parts = remotePath.split('/');
       const name = parts.pop()!;
       const parentPath = parts.join('/');
       const parentId = await getOrCreateFolder(parentPath);
-      
+
       const existing = await sql`SELECT id FROM nodes WHERE parent_id ${parentId === null ? sql`IS NULL` : sql`= ${parentId}`} AND name = ${name} AND type = 'file' AND user_email = ${USER_EMAIL}`;
       if (existing.length === 0) {
         await sql`
