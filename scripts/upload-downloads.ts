@@ -91,7 +91,32 @@ function isVideoFile(filename: string): boolean {
 }
 
 /**
- * Optimize video file using FFmpeg (H.264 CRF 25, +faststart for instant web streaming)
+ * Get correct MIME content-type for web browser streaming/rendering
+ */
+function getContentType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  const map: Record<string, string> = {
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.webm': 'video/webm',
+    '.mkv': 'video/x-matroska',
+    '.avi': 'video/x-msvideo',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.json': 'application/json',
+    '.csv': 'text/csv',
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
+/**
+ * Optimize video file using FFmpeg (H.264 CRF 25, yuv420p pixel format, +faststart for instant web streaming)
  */
 function optimizeVideo(inputPath: string, relativePath: string): { uploadPath: string; isTemporary: boolean } {
   if (!ffmpegPath) {
@@ -100,13 +125,14 @@ function optimizeVideo(inputPath: string, relativePath: string): { uploadPath: s
   }
 
   const tempOutputPath = path.join('/tmp', `opt_${Date.now()}_${path.basename(inputPath, path.extname(inputPath))}.mp4`);
-  console.log(`   🎬 Optimizing video with FFmpeg (CRF 25, +faststart)...`);
+  console.log(`   🎬 Optimizing video with FFmpeg (CRF 25, yuv420p, +faststart)...`);
 
   try {
     execFileSync(ffmpegPath, [
       '-y',
       '-i', inputPath,
       '-vcodec', 'libx264',
+      '-pix_fmt', 'yuv420p',
       '-crf', '25',
       '-preset', 'fast',
       '-movflags', '+faststart',
@@ -163,13 +189,15 @@ async function uploadAndDelete() {
 
     try {
       const fileBuffer = fs.readFileSync(sourcePath);
+      const contentType = getContentType(remotePath);
       await put(remotePath, fileBuffer, {
         access: 'public',
         addRandomSuffix: false,
+        contentType,
         token: TOKEN,
       });
 
-      console.log(`   ✅ Success -> ${remotePath}`);
+      console.log(`   ✅ Success (${contentType}) -> ${remotePath}`);
       
       // Clean up temporary optimized video if created
       if (isTemporary && fs.existsSync(sourcePath)) {
