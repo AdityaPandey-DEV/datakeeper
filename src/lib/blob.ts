@@ -125,6 +125,63 @@ export async function listFolder(prefix: string): Promise<FileItem[]> {
 }
 
 /**
+ * Search all files recursively from a given path prefix.
+ */
+export async function searchFiles(prefix: string, query: string): Promise<FileItem[]> {
+  const normalizedPrefix = prefix ? (prefix.endsWith('/') ? prefix : prefix + '/') : '';
+  const items: FileItem[] = [];
+  const s3 = getS3Client();
+  const bucket = getBucketName();
+  const lowerQuery = query.toLowerCase();
+
+  let continuationToken: string | undefined = undefined;
+
+  do {
+    // Note: No Delimiter is used here, so it recursively searches all nested folders
+    const command: ListObjectsV2Command = new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: normalizedPrefix,
+      ContinuationToken: continuationToken,
+    });
+
+    const response: any = await s3.send(command);
+
+    if (response.Contents) {
+      for (const obj of response.Contents) {
+        if (!obj.Key) continue;
+        const relativePath = obj.Key.slice(normalizedPrefix.length);
+
+        // Skip root markers or .keep files
+        if (relativePath === '' || relativePath.endsWith('.keep')) continue;
+
+        // Get just the filename to check against the query
+        const filename = relativePath.split('/').pop() || '';
+        
+        // Check if path or filename includes the query
+        if (relativePath.toLowerCase().includes(lowerQuery)) {
+          items.push({
+            name: filename,
+            type: 'file',
+            path: obj.Key,
+            url: getPublicUrl(obj.Key),
+            size: obj.Size,
+            uploadedAt: obj.LastModified,
+            contentType: undefined,
+          });
+        }
+      }
+    }
+
+    continuationToken = response.NextContinuationToken;
+  } while (continuationToken);
+
+  // Sort by name alphabetically
+  items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
+  return items;
+}
+
+/**
  * Upload a file to a specific path in the blob store.
  */
 export async function uploadFile(

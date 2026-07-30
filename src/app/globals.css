@@ -388,7 +388,7 @@ a {
 
 .file-list-header {
   display: grid;
-  grid-template-columns: 40px 44px 1fr 80px 160px;
+  grid-template-columns: 40px 44px 1fr 120px 80px 160px;
   align-items: center;
   padding: 8px 16px;
   background: var(--bg-tertiary);
@@ -402,6 +402,24 @@ a {
   color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.header-label.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--transition-fast);
+}
+
+.header-label.sortable:hover {
+  color: var(--text-primary);
+}
+
+.sort-indicator {
+  font-size: 0.625rem;
+  color: var(--accent);
 }
 
 .file-list-items {
@@ -411,7 +429,7 @@ a {
 /* --- File Row (individual item) --- */
 .file-row {
   display: grid;
-  grid-template-columns: 40px 44px 1fr 80px 160px;
+  grid-template-columns: 40px 44px 1fr 120px 80px 160px;
   align-items: center;
   padding: 10px 16px;
   gap: 8px;
@@ -514,6 +532,13 @@ a.file-row:hover {
   font-size: 0.875rem;
   font-family: var(--font-sans);
   outline: none;
+}
+
+/* --- File Date --- */
+.file-row-date {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
 }
 
 /* --- File Size --- */

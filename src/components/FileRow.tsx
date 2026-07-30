@@ -120,6 +120,9 @@ export function FileRow({
           </span>
         )}
       </div>
+      <div className="file-row-date">
+        {item.uploadedAt ? new Date(item.uploadedAt).toLocaleDateString() : '—'}
+      </div>
       <div className="file-row-size">
         {item.type === 'file' && item.size !== undefined ? formatFileSize(item.size) : '—'}
       </div>

@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { listFolder, deleteFile } from '@/lib/blob';
+import { listFolder, deleteFile, searchFiles } from '@/lib/blob';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const path = searchParams.get('path') || '';
+    const search = searchParams.get('search') || '';
 
-    const items = await listFolder(path);
+    let items;
+    if (search) {
+      items = await searchFiles(path, search);
+    } else {
+      items = await listFolder(path);
+    }
 
     return NextResponse.json({ items });
   } catch (error) {

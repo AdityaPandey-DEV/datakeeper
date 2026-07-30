@@ -3,6 +3,14 @@
 import { type FileItem } from '@/lib/blob';
 import { FileRow } from './FileRow';
 
+export type SortColumn = 'name' | 'size' | 'date';
+export type SortDirection = 'asc' | 'desc';
+
+export interface SortConfig {
+  column: SortColumn;
+  direction: SortDirection;
+}
+
 interface FileListProps {
   items: FileItem[];
   selectedItems: Set<string>;
@@ -13,6 +21,8 @@ interface FileListProps {
   onRenameItem: (item: FileItem, newName: string) => void;
   onPreviewItem: (item: FileItem) => void;
   isLoading: boolean;
+  sortConfig: SortConfig;
+  onSort: (column: SortColumn) => void;
 }
 
 export function FileList({
@@ -25,6 +35,8 @@ export function FileList({
   onRenameItem,
   onPreviewItem,
   isLoading,
+  sortConfig,
+  onSort,
 }: FileListProps) {
   const allSelected = items.length > 0 && items.every(item =>
     selectedItems.has(item.type === 'file' ? item.url! : item.path)
@@ -39,6 +51,15 @@ export function FileList({
     );
   }
 
+  const SortIndicator = ({ column }: { column: SortColumn }) => {
+    if (sortConfig.column !== column) return null;
+    return (
+      <span className="sort-indicator">
+        {sortConfig.direction === 'asc' ? '▲' : '▼'}
+      </span>
+    );
+  };
+
   return (
     <div className="file-list">
       {items.length > 0 && (
@@ -52,9 +73,15 @@ export function FileList({
             />
           </div>
           <div className="file-row-icon" />
-          <div className="file-row-name header-label">Name</div>
-          <div className="file-row-size header-label">Size</div>
-          <div className="file-row-actions header-label">Actions</div>
+          <div className="file-row-name header-label sortable" onClick={() => onSort('name')}>
+            Name <SortIndicator column="name" />
+          </div>
+          <div className="file-row-size header-label sortable" onClick={() => onSort('size')}>
+            Size <SortIndicator column="size" />
+          </div>
+          <div className="file-row-actions header-label sortable" onClick={() => onSort('date')}>
+            Date Modified <SortIndicator column="date" />
+          </div>
         </div>
       )}
 

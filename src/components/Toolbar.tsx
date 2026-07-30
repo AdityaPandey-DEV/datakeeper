@@ -6,6 +6,8 @@ interface ToolbarProps {
   selectedCount: number;
   onMoveSelected: () => void;
   onDeleteSelected: () => void;
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
 }
 
 export function Toolbar({
@@ -14,6 +16,8 @@ export function Toolbar({
   selectedCount,
   onMoveSelected,
   onDeleteSelected,
+  searchQuery,
+  onSearchChange,
 }: ToolbarProps) {
   return (
     <div className="toolbar">
@@ -52,6 +56,23 @@ export function Toolbar({
             </svg>
             Delete
           </button>
+        </div>
+      )}
+      {selectedCount === 0 && (
+        <div className="toolbar-search">
+          <div className="toolbar-search-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </div>
+          <input
+            type="text"
+            className="toolbar-search-input"
+            placeholder="Search all child folders..."
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+          />
         </div>
       )}
     </div>

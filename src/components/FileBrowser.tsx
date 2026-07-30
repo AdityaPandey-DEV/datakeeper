@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { type FileItem } from '@/lib/blob';
 import { Breadcrumb } from './Breadcrumb';
 import { Toolbar } from './Toolbar';
-import { FileList } from './FileList';
+import { FileList, type SortConfig, type SortColumn } from './FileList';
 import { UploadArea } from './UploadArea';
 import { NewFolderDialog } from './NewFolderDialog';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
@@ -23,6 +23,11 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
+  // Search and Sort
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ column: 'name', direction: 'asc' });
+
   // Dialog states
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null);
@@ -32,10 +37,23 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
   const [isBulkMove, setIsBulkMove] = useState(false);
   const [isOperating, setIsOperating] = useState(false);
 
+  // Debounce search query
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   const fetchFiles = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/files?path=${encodeURIComponent(initialPath)}`);
+      const url = new URL('/api/files', window.location.origin);
+      url.searchParams.set('path', initialPath);
+      if (debouncedSearch) {
+        url.searchParams.set('search', debouncedSearch);
+      }
+      const res = await fetch(url.toString());
       const data = await res.json();
       setItems(data.items || []);
     } catch (error) {
@@ -43,12 +61,46 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [initialPath]);
+  }, [initialPath, debouncedSearch]);
 
   useEffect(() => {
     fetchFiles();
     setSelectedItems(new Set());
   }, [fetchFiles]);
+
+  const processedItems = useMemo(() => {
+    const sorted = [...items].sort((a, b) => {
+      // Always put folders first, unless searching (where folders might not even be returned depending on search criteria)
+      if (a.type === 'folder' && b.type !== 'folder') return -1;
+      if (a.type !== 'folder' && b.type === 'folder') return 1;
+
+      let comparison = 0;
+      switch (sortConfig.column) {
+        case 'name':
+          comparison = a.name.localeCompare(b.name);
+          break;
+        case 'size':
+          const sizeA = a.size || 0;
+          const sizeB = b.size || 0;
+          comparison = sizeA - sizeB;
+          break;
+        case 'date':
+          const dateA = a.uploadedAt ? new Date(a.uploadedAt).getTime() : 0;
+          const dateB = b.uploadedAt ? new Date(b.uploadedAt).getTime() : 0;
+          comparison = dateA - dateB;
+          break;
+      }
+      return sortConfig.direction === 'asc' ? comparison : -comparison;
+    });
+    return sorted;
+  }, [items, sortConfig]);
+
+  const handleSort = (column: SortColumn) => {
+    setSortConfig(prev => ({
+      column,
+      direction: prev.column === column && prev.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  };
 
   // Selection handlers
   const handleSelectItem = (id: string, checked: boolean) => {
@@ -62,7 +114,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      const all = new Set(items.map(item => item.type === 'file' ? item.url! : item.path));
+      const all = new Set(processedItems.map(item => item.type === 'file' ? item.url! : item.path));
       setSelectedItems(all);
     } else {
       setSelectedItems(new Set());
@@ -120,7 +172,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
     setIsOperating(true);
     try {
       for (const id of selectedItems) {
-        const item = items.find(i => (i.type === 'file' ? i.url : i.path) === id);
+        const item = processedItems.find(i => (i.type === 'file' ? i.url : i.path) === id);
         if (!item) continue;
 
         if (item.type === 'file') {
@@ -194,7 +246,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
     setIsOperating(true);
     try {
       for (const id of selectedItems) {
-        const item = items.find(i => (i.type === 'file' ? i.url : i.path) === id);
+        const item = processedItems.find(i => (i.type === 'file' ? i.url : i.path) === id);
         if (!item) continue;
 
         if (item.type === 'file') {
@@ -270,6 +322,8 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
         selectedCount={selectedItems.size}
         onMoveSelected={() => setIsBulkMove(true)}
         onDeleteSelected={() => setIsBulkDelete(true)}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
       />
 
       {isOperating && (
@@ -280,7 +334,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
       )}
 
       <FileList
-        items={items}
+        items={processedItems}
         selectedItems={selectedItems}
         onSelectItem={handleSelectItem}
         onSelectAll={handleSelectAll}
@@ -289,6 +343,8 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
         onRenameItem={handleRenameItem}
         onPreviewItem={(item) => setPreviewTarget(item)}
         isLoading={isLoading}
+        sortConfig={sortConfig}
+        onSort={handleSort}
       />
 
       <UploadArea
