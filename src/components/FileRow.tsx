@@ -108,11 +108,12 @@ export function FileRow({
         ) : (
           <span
             className="file-name-text"
-            onDoubleClick={(e) => {
+            style={{ cursor: item.type === "file" ? "pointer" : "inherit" }}
+            onClick={(e) => {
               if (item.type === 'file') {
                 e.preventDefault();
                 e.stopPropagation();
-                setIsRenaming(true);
+                onPreview();
               }
             }}
           >
