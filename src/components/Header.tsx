@@ -2,7 +2,7 @@
 
 import { ThemeToggle } from './ThemeToggle';
 import Link from 'next/link';
-import { signOut, useSession } from 'next-auth/react';
+import { useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
 
 export function Header() {
@@ -11,18 +11,12 @@ export function Header() {
   const [hasSecretCookie, setHasSecretCookie] = useState(false);
 
   useEffect(() => {
-    // Check if secret_code cookie exists (we can't read httpOnly, but we can assume if they aren't in session they might be secret)
-    // Actually, checking cookie from client is tricky if HttpOnly. We'll just show logout if either session exists OR we assume secret mode if they reach here without session.
-  }, []);
-
-  const handleLogout = async () => {
-    if (session) {
-      await signOut();
-    } else {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      window.location.reload();
+    // If we have no session, we might be using a secret code.
+    if (!session) {
+      setHasSecretCookie(document.cookie.includes('secret_code')); // Note: HttpOnly means we can't actually read this here reliably if we rely on HttpOnly.
+      // We'll just assume they have access if they can see the header and aren't logged in.
     }
-  };
+  }, [session]);
 
   return (
     <header className="header">
@@ -32,12 +26,25 @@ export function Header() {
         </Link>
         <div className="header-actions">
           <ThemeToggle />
-          <button 
-            onClick={handleLogout}
-            style={{ marginLeft: '1rem', padding: '0.4rem 0.8rem', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--text-primary)' }}
-          >
-            Logout
-          </button>
+          
+          <Link href="/profile" style={{ display: 'flex', alignItems: 'center', marginLeft: '1rem', textDecoration: 'none' }}>
+            {session?.user?.image ? (
+              <img 
+                src={session.user.image} 
+                alt="Profile" 
+                style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--border-color)' }}
+              />
+            ) : (
+              <div style={{
+                width: '36px', height: '36px', borderRadius: '50%', background: 'var(--text-primary)',
+                color: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontWeight: 'bold', fontSize: '1rem', border: '2px solid var(--border-color)'
+              }}>
+                {session?.user?.name ? session.user.name.charAt(0).toUpperCase() : 'S'}
+              </div>
+            )}
+          </Link>
+
         </div>
       </div>
     </header>
