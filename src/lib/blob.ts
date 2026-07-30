@@ -236,7 +236,7 @@ export async function deleteFolder(prefix: string): Promise<void> {
     );
 
     if (response.Contents && response.Contents.length > 0) {
-      const keys = response.Contents.map(obj => obj.Key).filter(k => k) as string[];
+      const keys = response.Contents.map((obj: any) => obj.Key).filter((k: any) => k) as string[];
       
       // Batch delete
       for (let i = 0; i < keys.length; i += 1000) {
