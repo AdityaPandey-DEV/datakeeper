@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Secret code too short' }, { status: 400 });
     }
 
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     cookieStore.set('secret_code', secretCode, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',

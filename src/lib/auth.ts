@@ -28,7 +28,7 @@ export async function getAuthContext() {
     return { type: 'user', value: session.user.email };
   }
   
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const secretCode = cookieStore.get('secret_code')?.value;
   if (secretCode) {
     return { type: 'secret', value: secretCode };

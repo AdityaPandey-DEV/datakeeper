@@ -6,7 +6,7 @@ import { LandingPage } from '@/components/LandingPage';
 
 export default async function HomePage() {
   const session = await getServerSession(authOptions);
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const secretCode = cookieStore.get('secret_code')?.value;
 
   if (session?.user || secretCode) {

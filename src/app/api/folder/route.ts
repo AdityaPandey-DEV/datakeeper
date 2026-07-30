@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
             expiresAt = date;
         }
 
-        const insertRes = await sql`
+        const insertRes: any[] = await sql`
           INSERT INTO nodes (parent_id, name, type, ${authCol}, expires_at) 
           VALUES (${currentParentId}, ${part}, 'folder', ${auth.value}, ${expiresAt}) 
           RETURNING id

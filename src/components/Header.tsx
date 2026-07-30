@@ -6,7 +6,8 @@ import { signOut, useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
 
 export function Header() {
-  const { data: session } = useSession();
+  const sessionContext = useSession();
+  const session = sessionContext?.data;
   const [hasSecretCookie, setHasSecretCookie] = useState(false);
 
   useEffect(() => {
