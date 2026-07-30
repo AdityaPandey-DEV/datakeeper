@@ -1,6 +1,7 @@
 'use client';
 
 import { getFileCategory } from '@/lib/blob';
+import { VideoPlayer } from './VideoPlayer';
 
 interface FilePreviewProps {
   isOpen: boolean;
@@ -23,12 +24,7 @@ export function FilePreview({ isOpen, fileName, fileUrl, onClose }: FilePreviewP
           </div>
         );
       case 'video':
-        return (
-          <video controls className="preview-video" autoPlay={false}>
-            <source src={fileUrl} />
-            Your browser does not support the video tag.
-          </video>
-        );
+        return <VideoPlayer src={fileUrl} title={fileName} />;
       case 'audio':
         return (
           <div className="preview-audio-container">
