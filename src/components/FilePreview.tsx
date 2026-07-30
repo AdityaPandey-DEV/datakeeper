@@ -53,6 +53,16 @@ export function FilePreview({ isOpen, fileName, fileUrl, onClose }: FilePreviewP
             title={fileName}
           />
         );
+      case 'text':
+      case 'code':
+        return (
+          <iframe
+            src={fileUrl}
+            className="preview-text"
+            title={fileName}
+            style={{ width: '100%', height: '65vh', background: 'white', borderRadius: 'var(--radius-md)', border: 'none' }}
+          />
+        );
       default:
         return (
           <div className="preview-unsupported">
