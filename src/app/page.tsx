@@ -1,7 +1,5 @@
-export default function Home() {
-  return (
-    <main>
-      <div>Hello world!</div>
-    </main>
-  );
+import { FileBrowser } from '@/components/FileBrowser';
+
+export default function HomePage() {
+  return <FileBrowser initialPath="" />;
 }
