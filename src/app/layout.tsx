@@ -49,12 +49,12 @@ export default function RootLayout({
       </head>
       <body>
         <div className="app-shell">
-          <Header />
-          <main className="main-content">
-            <Providers>
+          <Providers>
+            <Header />
+            <main className="main-content">
               {children}
-            </Providers>
-          </main>
+            </main>
+          </Providers>
           <Footer />
         </div>
       </body>
