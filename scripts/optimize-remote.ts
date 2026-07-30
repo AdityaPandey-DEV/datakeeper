@@ -11,7 +11,7 @@ try {
   ffmpegPath = null;
 }
 
-const CONCURRENCY = 3; // Number of remote videos to download, optimize, and re-upload in parallel
+const CONCURRENCY = 4; // 4x parallel workers with Apple Silicon GPU hardware acceleration
 
 // Load BLOB_READ_WRITE_TOKEN from .env.local
 function loadEnvLocal() {
@@ -98,7 +98,7 @@ async function optimizeRemoteVideos() {
   }
 
   console.log(`🚀 Found ${videoBlobs.length} video(s) in cloud.`);
-  console.log(`⚡ Concurrency: Processing ${CONCURRENCY} remote videos in parallel!\n`);
+  console.log(`⚡ Concurrency: ${CONCURRENCY} parallel workers | Apple GPU (Metal/VideoToolbox) Accelerated!\n`);
 
   await runWithConcurrency(videoBlobs, CONCURRENCY, async (blob, i) => {
     const tag = `[${i + 1}/${videoBlobs.length}] [${path.basename(blob.pathname)}]`;
@@ -116,19 +116,33 @@ async function optimizeRemoteVideos() {
       const arrayBuffer = await res.arrayBuffer();
       fs.writeFileSync(tempInput, Buffer.from(arrayBuffer));
 
-      // 2. Optimize with FFmpeg (yuv420p + faststart + CRF 25)
-      console.log(`${tag} 🎬 Re-encoding with FFmpeg (yuv420p, H.264, +faststart)...`);
-      execFileSync(ffmpegPath, [
-        '-y',
-        '-i', tempInput,
-        '-vcodec', 'libx264',
-        '-pix_fmt', 'yuv420p',
-        '-crf', '25',
-        '-preset', 'fast',
-        '-movflags', '+faststart',
-        '-acodec', 'copy',
-        tempOutput
-      ], { stdio: 'ignore' });
+      // 2. Optimize with Apple GPU Hardware Acceleration (h264_videotoolbox) with fallback to libx264
+      try {
+        console.log(`${tag} ⚡ Apple GPU (VideoToolbox) Hardware Encoding...`);
+        execFileSync(ffmpegPath, [
+          '-y',
+          '-i', tempInput,
+          '-c:v', 'h264_videotoolbox',
+          '-q:v', '65',
+          '-pix_fmt', 'yuv420p',
+          '-movflags', '+faststart',
+          '-c:a', 'copy',
+          tempOutput
+        ], { stdio: 'ignore' });
+      } catch (gpuErr) {
+        console.log(`${tag} ⚠️  GPU encoder fallback -> CPU libx264...`);
+        execFileSync(ffmpegPath, [
+          '-y',
+          '-i', tempInput,
+          '-vcodec', 'libx264',
+          '-pix_fmt', 'yuv420p',
+          '-crf', '25',
+          '-preset', 'fast',
+          '-movflags', '+faststart',
+          '-acodec', 'copy',
+          tempOutput
+        ], { stdio: 'ignore' });
+      }
 
       const newSize = fs.statSync(tempOutput).size;
       const savedPct = ((1 - newSize / blob.size) * 100).toFixed(1);
