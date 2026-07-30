@@ -27,7 +27,7 @@ Built with **Next.js 15** + **Vercel Blob Storage**.
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/adityapandeydev/datakeeper.git
+git clone https://github.com/AdityaPandey-DEV/datakeeper.git
 cd datakeeper
 npm install
 ```
@@ -59,7 +59,7 @@ Open [http://localhost:3000](http://localhost:3000)
 
 Deploy to Vercel with one click:
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/adityapandeydev/datakeeper)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/AdityaPandey-DEV/datakeeper)
 
 The `BLOB_READ_WRITE_TOKEN` will be auto-populated when you add a Blob Store to your Vercel project.
 

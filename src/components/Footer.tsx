@@ -15,7 +15,7 @@ export function Footer() {
         <div className="footer-right">
           <p className="footer-label">Quick Links</p>
           <a
-            href="https://github.com/adityapandeydev"
+            href="https://github.com/AdityaPandey-DEV"
             target="_blank"
             rel="noopener noreferrer"
             className="footer-link"
