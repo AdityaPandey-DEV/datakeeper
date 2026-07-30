@@ -11,6 +11,8 @@ try {
   ffmpegPath = null;
 }
 
+const CONCURRENCY = 3; // Number of remote videos to download, optimize, and re-upload in parallel
+
 // Load BLOB_READ_WRITE_TOKEN from .env.local
 function loadEnvLocal() {
   const envPath = path.resolve(__dirname, '../.env.local');
@@ -52,6 +54,23 @@ function isVideoFile(filename: string): boolean {
   return ['.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'].includes(ext);
 }
 
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>
+) {
+  let currentIndex = 0;
+  const workers = Array(Math.min(concurrency, items.length))
+    .fill(0)
+    .map(async () => {
+      while (currentIndex < items.length) {
+        const index = currentIndex++;
+        await worker(items[index], index);
+      }
+    });
+  await Promise.all(workers);
+}
+
 async function optimizeRemoteVideos() {
   if (!ffmpegPath) {
     console.error('❌ Error: ffmpeg-static is not available.');
@@ -78,25 +97,27 @@ async function optimizeRemoteVideos() {
     cursor = response.cursor;
   }
 
-  console.log(`🚀 Found ${videoBlobs.length} video(s) in cloud. Starting optimization and web-repair...\n`);
+  console.log(`🚀 Found ${videoBlobs.length} video(s) in cloud.`);
+  console.log(`⚡ Concurrency: Processing ${CONCURRENCY} remote videos in parallel!\n`);
 
-  for (let i = 0; i < videoBlobs.length; i++) {
-    const blob = videoBlobs[i];
-    console.log(`[${i + 1}/${videoBlobs.length}] Processing: ${blob.pathname} (${formatSize(blob.size)})...`);
+  await runWithConcurrency(videoBlobs, CONCURRENCY, async (blob, i) => {
+    const tag = `[${i + 1}/${videoBlobs.length}] [${path.basename(blob.pathname)}]`;
+    console.log(`${tag} Processing (${formatSize(blob.size)})...`);
 
-    const tempInput = path.join('/tmp', `dl_${Date.now()}_input.mp4`);
-    const tempOutput = path.join('/tmp', `opt_${Date.now()}_output.mp4`);
+    const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const tempInput = path.join('/tmp', `dl_${uniqueId}_input.mp4`);
+    const tempOutput = path.join('/tmp', `opt_${uniqueId}_output.mp4`);
 
     try {
       // 1. Download video from Vercel Blob to /tmp
-      console.log(`   📥 Downloading from CDN...`);
+      console.log(`${tag} 📥 Downloading from CDN...`);
       const res = await fetch(blob.url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const arrayBuffer = await res.arrayBuffer();
       fs.writeFileSync(tempInput, Buffer.from(arrayBuffer));
 
       // 2. Optimize with FFmpeg (yuv420p + faststart + CRF 25)
-      console.log(`   🎬 Re-encoding with FFmpeg (yuv420p, H.264, +faststart)...`);
+      console.log(`${tag} 🎬 Re-encoding with FFmpeg (yuv420p, H.264, +faststart)...`);
       execFileSync(ffmpegPath, [
         '-y',
         '-i', tempInput,
@@ -111,10 +132,10 @@ async function optimizeRemoteVideos() {
 
       const newSize = fs.statSync(tempOutput).size;
       const savedPct = ((1 - newSize / blob.size) * 100).toFixed(1);
-      console.log(`   ✨ Optimized: ${formatSize(blob.size)} -> ${formatSize(newSize)} (${savedPct}% saved!)`);
+      console.log(`${tag} ✨ Optimized: ${formatSize(blob.size)} -> ${formatSize(newSize)} (${savedPct}% saved!)`);
 
       // 3. Re-upload and overwrite remote blob
-      console.log(`   📤 Uploading web-playable version to ${blob.pathname}...`);
+      console.log(`${tag} 📤 Uploading web-playable version...`);
       const fileBuffer = fs.readFileSync(tempOutput);
       await put(blob.pathname, fileBuffer, {
         access: 'public',
@@ -124,14 +145,14 @@ async function optimizeRemoteVideos() {
         token: TOKEN,
       });
 
-      console.log(`   ✅ Successfully repaired and optimized ${blob.pathname}!\n`);
+      console.log(`${tag} ✅ Successfully repaired and optimized!\n`);
     } catch (err: any) {
-      console.error(`   ❌ Failed to process ${blob.pathname}: ${err.message}\n`);
+      console.error(`${tag} ❌ Failed to process: ${err.message}\n`);
     } finally {
       if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
       if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
     }
-  }
+  });
 
   console.log('🎉 All remote videos have been optimized and repaired for web playback!');
 }

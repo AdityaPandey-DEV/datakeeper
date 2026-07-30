@@ -46,6 +46,7 @@ if (!TOKEN) {
 const DOWNLOADS_DIR = path.resolve(process.env.HOME || '/Users/adityapandeydev', 'Downloads');
 const REMOTE_PREFIX = 'Course-Uploads/'; // The root folder in DataKeeper where files will go
 const USE_OPTIMIZE = process.argv.includes('--optimize') || process.argv.includes('-o');
+const CONCURRENCY = 3; // Number of files to process in parallel
 
 interface FileEntry {
   localPath: string;
@@ -118,14 +119,15 @@ function getContentType(filename: string): string {
 /**
  * Optimize video file using FFmpeg (H.264 CRF 25, yuv420p pixel format, +faststart for instant web streaming)
  */
-function optimizeVideo(inputPath: string, relativePath: string): { uploadPath: string; isTemporary: boolean } {
+function optimizeVideo(inputPath: string, relativePath: string, tag: string): { uploadPath: string; isTemporary: boolean } {
   if (!ffmpegPath) {
-    console.log('   ⚠️  FFmpeg not found. Uploading original video without optimization.');
+    console.log(`${tag} ⚠️  FFmpeg not found. Uploading original video without optimization.`);
     return { uploadPath: inputPath, isTemporary: false };
   }
 
-  const tempOutputPath = path.join('/tmp', `opt_${Date.now()}_${path.basename(inputPath, path.extname(inputPath))}.mp4`);
-  console.log(`   🎬 Optimizing video with FFmpeg (CRF 25, yuv420p, +faststart)...`);
+  const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const tempOutputPath = path.join('/tmp', `opt_${uniqueId}_${path.basename(inputPath, path.extname(inputPath))}.mp4`);
+  console.log(`${tag} 🎬 Optimizing video with FFmpeg (CRF 25, yuv420p, +faststart)...`);
 
   try {
     execFileSync(ffmpegPath, [
@@ -144,13 +146,30 @@ function optimizeVideo(inputPath: string, relativePath: string): { uploadPath: s
     const newSize = fs.statSync(tempOutputPath).size;
     const savedPct = ((1 - newSize / origSize) * 100).toFixed(1);
 
-    console.log(`   ✨ Optimized: ${formatSize(origSize)} -> ${formatSize(newSize)} (${savedPct}% saved!)`);
+    console.log(`${tag} ✨ Optimized: ${formatSize(origSize)} -> ${formatSize(newSize)} (${savedPct}% saved!)`);
     return { uploadPath: tempOutputPath, isTemporary: true };
   } catch (err: any) {
-    console.log(`   ⚠️  FFmpeg optimization failed (${err.message}). Falling back to original video.`);
+    console.log(`${tag} ⚠️  FFmpeg optimization failed (${err.message}). Falling back to original video.`);
     if (fs.existsSync(tempOutputPath)) fs.unlinkSync(tempOutputPath);
     return { uploadPath: inputPath, isTemporary: false };
   }
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>
+) {
+  let currentIndex = 0;
+  const workers = Array(Math.min(concurrency, items.length))
+    .fill(0)
+    .map(async () => {
+      while (currentIndex < items.length) {
+        const index = currentIndex++;
+        await worker(items[index], index);
+      }
+    });
+  await Promise.all(workers);
 }
 
 async function uploadAndDelete() {
@@ -163,31 +182,32 @@ async function uploadAndDelete() {
   }
 
   console.log(`🚀 Found ${files.length} files to upload into "${REMOTE_PREFIX}" in DataKeeper.`);
+  console.log(`⚡ Concurrency: Processing ${CONCURRENCY} files in parallel!`);
   if (USE_OPTIMIZE) {
-    console.log(`⚡ FFmpeg Video Optimization ENABLED (--optimize)`);
+    console.log(`🎬 FFmpeg Video Optimization ENABLED (--optimize)`);
   }
   console.log('');
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
+  await runWithConcurrency(files, CONCURRENCY, async (file, index) => {
+    const tag = `[${index + 1}/${files.length}] [${path.basename(file.relativePath)}]`;
     let remotePath = `${REMOTE_PREFIX}${file.relativePath}`;
-    console.log(`[${i + 1}/${files.length}] Uploading: ${file.relativePath} (${formatSize(file.size)})...`);
+    console.log(`${tag} 🚀 Processing (${formatSize(file.size)})...`);
 
     let sourcePath = file.localPath;
     let isTemporary = false;
 
     // Run FFmpeg optimizer if enabled and file is a video
     if (USE_OPTIMIZE && isVideoFile(file.localPath)) {
-      const opt = optimizeVideo(file.localPath, file.relativePath);
+      const opt = optimizeVideo(file.localPath, file.relativePath, tag);
       sourcePath = opt.uploadPath;
       isTemporary = opt.isTemporary;
-      // If optimized to .mp4, ensure remote filename ends in .mp4
       if (isTemporary && !remotePath.endsWith('.mp4')) {
         remotePath = remotePath.slice(0, remotePath.lastIndexOf('.')) + '.mp4';
       }
     }
 
     try {
+      console.log(`${tag} 📤 Uploading to CDN...`);
       const fileBuffer = fs.readFileSync(sourcePath);
       const contentType = getContentType(remotePath);
       await put(remotePath, fileBuffer, {
@@ -198,7 +218,7 @@ async function uploadAndDelete() {
         token: TOKEN,
       });
 
-      console.log(`   ✅ Success (${contentType}) -> ${remotePath}`);
+      console.log(`${tag} ✅ Success (${contentType}) -> ${remotePath}`);
       
       // Clean up temporary optimized video if created
       if (isTemporary && fs.existsSync(sourcePath)) {
@@ -207,15 +227,14 @@ async function uploadAndDelete() {
 
       // Delete the original local file after successful upload
       fs.unlinkSync(file.localPath);
-      console.log(`   🗑️  Deleted local file: ${file.relativePath}\n`);
+      console.log(`${tag} 🗑️  Deleted local file\n`);
     } catch (err: any) {
-      console.error(`   ❌ Failed to upload ${file.relativePath}: ${err.message}\n`);
-      console.log(`   ⚠️  Skipping local file deletion for safety.\n`);
+      console.error(`${tag} ❌ Failed to upload: ${err.message}\n`);
       if (isTemporary && fs.existsSync(sourcePath)) {
         fs.unlinkSync(sourcePath);
       }
     }
-  }
+  });
 
   console.log('🎉 Bulk upload process completed!');
 }
