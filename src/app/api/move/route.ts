@@ -10,12 +10,6 @@ export async function POST(request: NextRequest) {
     }
 
     const { action, id, newName, destinationPath } = await request.json();
-
-    if (!id) {
-      return NextResponse.json({ error: 'ID is required' }, { status: 400 });
-    }
-
-    
     const authCondition = auth.type === 'user' ? sql`user_email = ${auth.value}` : sql`secret_code = ${auth.value}`;
 
     if (action === 'list-folders') {
@@ -35,12 +29,12 @@ export async function POST(request: NextRequest) {
       `;
       
       const folders = Array.from(new Set(foldersResult.map(r => r.path)));
-      // The root email folder is always at index 0 because it has no parent.
       return NextResponse.json({ folders: folders });
     }
 
     if (!id) {
-
+      return NextResponse.json({ error: 'ID is required' }, { status: 400 });
+    }
 
     // Verify ownership
     const check = await sql`SELECT id FROM nodes WHERE id = ${id} AND ${authCondition}`;
