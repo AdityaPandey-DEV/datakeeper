@@ -38,7 +38,7 @@ export function AIOrganizeDialog({
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px', width: '100%' }}>
+      <div className="dialog-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px', width: '100%', background: 'var(--bg-primary)' }}>
         <div className="dialog-header">
           <h2 className="dialog-title">
             <span style={{ marginRight: '8px' }}>✨</span>

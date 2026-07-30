@@ -40,30 +40,39 @@ export async function POST(request: NextRequest) {
 
     const results = [];
 
-    // Execute moves sequentially or with a limit if it's too large, but for a web request we'll just run them.
-    // In production we'd want to use p-limit to prevent Lambda timeout, but this is fine for typical sizes.
-    for (const move of moves) {
-      if (!move.old_path || !move.new_path) continue;
+    // Helper to chunk the array for concurrency
+    const chunkArray = <T,>(arr: T[], size: number): T[][] => {
+      return Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
+        arr.slice(i * size, i * size + size)
+      );
+    };
 
-      try {
-        // 1. Copy
-        await s3.send(new CopyObjectCommand({
-          Bucket: bucket,
-          CopySource: `${bucket}/${encodeURI(move.old_path)}`,
-          Key: move.new_path,
-        }));
+    const chunks = chunkArray(moves, 10); // Process 10 files concurrently
 
-        // 2. Delete
-        await s3.send(new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: move.old_path,
-        }));
+    for (const chunk of chunks) {
+      await Promise.all(chunk.map(async (move: any) => {
+        if (!move.old_path || !move.new_path) return;
 
-        results.push({ ...move, success: true });
-      } catch (err: any) {
-        console.error(`Failed to move ${move.old_path} to ${move.new_path}:`, err);
-        results.push({ ...move, success: false, error: err.message });
-      }
+        try {
+          // 1. Copy
+          await s3.send(new CopyObjectCommand({
+            Bucket: bucket,
+            CopySource: `${bucket}/${encodeURI(move.old_path)}`,
+            Key: move.new_path,
+          }));
+
+          // 2. Delete
+          await s3.send(new DeleteObjectCommand({
+            Bucket: bucket,
+            Key: move.old_path,
+          }));
+
+          results.push({ ...move, success: true });
+        } catch (err: any) {
+          console.error(`Failed to move ${move.old_path} to ${move.new_path}:`, err);
+          results.push({ ...move, success: false, error: err.message });
+        }
+      }));
     }
 
     return NextResponse.json({ success: true, results });
