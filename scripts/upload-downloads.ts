@@ -193,6 +193,7 @@ async function uploadAndDelete() {
       await put(remotePath, fileBuffer, {
         access: 'public',
         addRandomSuffix: false,
+        allowOverwrite: true,
         contentType,
         token: TOKEN,
       });

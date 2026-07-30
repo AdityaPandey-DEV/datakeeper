@@ -119,6 +119,7 @@ async function optimizeRemoteVideos() {
       await put(blob.pathname, fileBuffer, {
         access: 'public',
         addRandomSuffix: false,
+        allowOverwrite: true,
         contentType: 'video/mp4',
         token: TOKEN,
       });
