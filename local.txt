@@ -1,0 +1,12 @@
+# Vercel Blob Storage
+# This will be auto-populated when you add a Blob Store in the Vercel dashboard
+# For local dev, get this from: Vercel Dashboard → Storage → Your Blob Store → .env.local tab
+BLOB_STORE_ID="store_VHksTtlDda8Plz2E"
+BLOB_READ_WRITE_TOKEN="vercel_blob_rw_VHksTtlDda8Plz2E_upoiqL8vKov1KPpbWZXA1TAZR7Bt5D"
+
+# Cloudflare R2 Credentials
+R2_ACCESS_KEY_ID="45225e5f356bed3761c54ed255ce94c3"
+R2_SECRET_ACCESS_KEY="f1a5ddcc59b9531f4014ab8fdc43b4a33cfd924b098f8fc3656570f4f3b4066c"
+R2_ENDPOINT="https://7ac00c885ce7c659c3b4babbc2197ed7.r2.cloudflarestorage.com"
+R2_PUBLIC_URL="https://pub-abf8442d6f7e4b589ab94e3316541359.r2.dev"
+R2_BUCKET_NAME="datakeeper"

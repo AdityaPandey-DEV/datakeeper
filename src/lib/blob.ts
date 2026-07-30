@@ -73,7 +73,7 @@ export async function listFolder(prefix: string): Promise<FileItem[]> {
       ContinuationToken: continuationToken,
     });
 
-    const response = await s3.send(command);
+    const response: any = await s3.send(command);
 
     // Add folders (CommonPrefixes)
     if (response.CommonPrefixes) {
@@ -227,7 +227,7 @@ export async function deleteFolder(prefix: string): Promise<void> {
   let continuationToken: string | undefined = undefined;
 
   do {
-    const response = await s3.send(
+    const response: any = await s3.send(
       new ListObjectsV2Command({
         Bucket: bucket,
         Prefix: normalizedPrefix,
@@ -304,7 +304,7 @@ export async function moveFolder(
   let continuationToken: string | undefined = undefined;
 
   do {
-    const response = await s3.send(
+    const response: any = await s3.send(
       new ListObjectsV2Command({
         Bucket: bucket,
         Prefix: normalizedSource,
@@ -367,7 +367,7 @@ export async function getAllFolders(): Promise<string[]> {
   let continuationToken: string | undefined = undefined;
 
   do {
-    const response = await s3.send(
+    const response: any = await s3.send(
       new ListObjectsV2Command({
         Bucket: bucket,
         ContinuationToken: continuationToken,
