@@ -3,6 +3,7 @@
 import { useRef, useState, useCallback } from 'react';
 
 interface UploadAreaProps {
+  inputRef?: React.RefObject<HTMLInputElement>;
   currentPath: string;
   onUploadComplete: () => void;
 }
@@ -14,8 +15,9 @@ interface UploadProgress {
   error?: string;
 }
 
-export function UploadArea({ currentPath, onUploadComplete }: UploadAreaProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+export function UploadArea({ currentPath, onUploadComplete, inputRef }: UploadAreaProps) {
+  const internalRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = inputRef || internalRef;
   const [isDragging, setIsDragging] = useState(false);
   const [uploads, setUploads] = useState<UploadProgress[]>([]);
   const [isUploading, setIsUploading] = useState(false);

@@ -402,6 +402,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
       <UploadArea
         currentPath={initialPath}
         onUploadComplete={fetchFiles}
+        inputRef={uploadInputRef}
       />
 
       {/* Dialogs */}

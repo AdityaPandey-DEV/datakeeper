@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
       // List specific folder
       const folderId = await getFolderIdByPath(path, auth);
       
-      let res;
+      let res: any[] = [];
       if (path === '') {
         // Root path
         res = await sql`SELECT id, parent_id, name, type, r2_key, size, created_at FROM nodes WHERE parent_id IS NULL AND ${authCondition} AND (expires_at IS NULL OR expires_at > NOW())`;
