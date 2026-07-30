@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
       const res = await sql`
         SELECT id, parent_id, name, type, r2_key, size, created_at 
         FROM nodes 
-        WHERE name ILIKE ${'%' + query + '%'} AND ${authCondition}
+        WHERE name ILIKE ${'%' + query + '%'} AND ${authCondition} AND (expires_at IS NULL OR expires_at > NOW())
       `;
       for (const row of res) {
         const itemPath = await getPathByFolderId(row.parent_id);
@@ -47,9 +47,9 @@ export async function GET(request: NextRequest) {
       
       let res;
       if (folderId === null) {
-        res = await sql`SELECT id, parent_id, name, type, r2_key, size, created_at FROM nodes WHERE parent_id IS NULL AND ${authCondition}`;
+        res = await sql`SELECT id, parent_id, name, type, r2_key, size, created_at FROM nodes WHERE parent_id IS NULL AND ${authCondition} AND (expires_at IS NULL OR expires_at > NOW())`;
       } else {
-        res = await sql`SELECT id, parent_id, name, type, r2_key, size, created_at FROM nodes WHERE parent_id = ${folderId} AND ${authCondition}`;
+        res = await sql`SELECT id, parent_id, name, type, r2_key, size, created_at FROM nodes WHERE parent_id = ${folderId} AND ${authCondition} AND (expires_at IS NULL OR expires_at > NOW())`;
       }
 
       for (const row of res) {
@@ -65,6 +65,11 @@ export async function GET(request: NextRequest) {
         });
       }
     }
+
+    // Asynchronously trigger cleanup to replace Vercel Cron
+    fetch(new URL('/api/cron/cleanup', request.url).toString(), {
+      headers: { 'Authorization': `Bearer ${process.env.CRON_SECRET || ''}` }
+    }).catch(e => console.error('Background cleanup error:', e));
 
     return NextResponse.json({ items });
   } catch (error) {
