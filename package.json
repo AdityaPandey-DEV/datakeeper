@@ -9,7 +9,8 @@
     "lint": "eslint",
     "upload-downloads": "npx tsx scripts/upload-downloads.ts",
     "upload-downloads:optimize": "npx tsx scripts/upload-downloads.ts --optimize",
-    "fix-types": "npx tsx scripts/fix-content-types.ts"
+    "fix-types": "npx tsx scripts/fix-content-types.ts",
+    "optimize:remote": "npx tsx scripts/optimize-remote.ts"
   },
   "dependencies": {
     "@vercel/blob": "^2.6.1",
