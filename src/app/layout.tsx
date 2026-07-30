@@ -8,11 +8,14 @@ export const metadata: Metadata = {
   title: "DataKeeper — Your Personal Cloud",
   description:
     "A sleek, macOS Finder-inspired file manager. Upload, organize, and access your files from any device, anywhere.",
-  keywords: ["file manager", "cloud storage", "data keeper", "vercel blob"],
+  keywords: ["file manager", "cloud storage", "data keeper"],
+  metadataBase: new URL("https://datakeeper-dev.vercel.app"),
   openGraph: {
     title: "DataKeeper — Your Personal Cloud",
     description: "Upload, organize, and access your files from any device.",
     type: "website",
+    url: "https://datakeeper-dev.vercel.app",
+    images: ["/og-image.png"],
   },
 };
 
