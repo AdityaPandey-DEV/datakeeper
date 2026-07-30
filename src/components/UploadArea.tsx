@@ -1,7 +1,6 @@
 'use client';
 
 import { useRef, useState, useCallback } from 'react';
-import { upload } from '@vercel/blob/client';
 
 interface UploadAreaProps {
   currentPath: string;
@@ -39,22 +38,54 @@ export function UploadArea({ currentPath, onUploadComplete }: UploadAreaProps) {
       const pathname = prefix + file.name;
 
       try {
-        await upload(pathname, file, {
-          access: 'public',
-          handleUploadUrl: '/api/upload',
-          multipart: file.size > 5 * 1024 * 1024, // Use multipart for files > 5MB
+        // 1. Get Presigned URL
+        const presignRes = await fetch('/api/upload/presigned', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: pathname, contentType: file.type })
         });
+        
+        if (!presignRes.ok) {
+          const errData = await presignRes.json();
+          throw new Error(errData.error || 'Failed to get upload URL');
+        }
+
+        const { url, key } = await presignRes.json();
+
+        // 2. Upload directly to Cloudflare R2
+        const uploadRes = await fetch(url, {
+          method: 'PUT',
+          body: file,
+          headers: {
+            'Content-Type': file.type || 'application/octet-stream',
+          }
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error('Failed to upload file to storage');
+        }
+
+        // 3. Log into Postgres
+        const completeRes = await fetch('/api/upload/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, size: file.size, clientPathname: pathname })
+        });
+
+        if (!completeRes.ok) {
+          throw new Error('Failed to log file to database');
+        }
 
         setUploads(prev =>
           prev.map((u, idx) =>
             idx === i ? { ...u, progress: 100, status: 'done' } : u
           )
         );
-      } catch (error) {
+      } catch (error: any) {
         setUploads(prev =>
           prev.map((u, idx) =>
             idx === i
-              ? { ...u, status: 'error', error: (error as Error).message }
+              ? { ...u, status: 'error', error: error.message }
               : u
           )
         );
