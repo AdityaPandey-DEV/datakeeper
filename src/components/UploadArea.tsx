@@ -3,7 +3,7 @@
 import { useRef, useState, useCallback } from 'react';
 
 interface UploadAreaProps {
-  inputRef?: React.RefObject<HTMLInputElement>;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
   currentPath: string;
   onUploadComplete: () => void;
 }
