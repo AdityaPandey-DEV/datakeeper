@@ -20,7 +20,7 @@ async function main() {
 
   // 1. Fetch all files from R2
   do {
-    const response = await s3.send(
+    const response: any = await s3.send(
       new ListObjectsV2Command({
         Bucket: bucket,
         ContinuationToken: continuationToken,

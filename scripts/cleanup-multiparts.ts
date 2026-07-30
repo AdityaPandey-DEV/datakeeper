@@ -18,7 +18,7 @@ async function main() {
   let abortedCount = 0;
 
   do {
-    const response = await s3.send(
+    const response: any = await s3.send(
       new ListMultipartUploadsCommand({
         Bucket: bucket,
         KeyMarker: keyMarker,
