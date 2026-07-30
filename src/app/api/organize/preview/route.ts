@@ -1,25 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql, getPathByFolderId, getFolderIdByPath } from '@/lib/db';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
+import { getAuthContext } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await getAuthContext();
+    if (!auth) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const authCondition = auth.type === 'user' ? sql`user_email = ${auth.value}` : sql`secret_code = ${auth.value}`;
+
     const { path } = await request.json();
 
     if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json({ error: 'GEMINI_API_KEY is missing' }, { status: 500 });
     }
 
-    // List all files starting from this path recursively
-    const folderId = await getFolderIdByPath(path || '');
+    const folderId = await getFolderIdByPath(path || '', auth);
     
-    // We will do a recursive fetch of files
     const rows = folderId === null 
       ? await sql`
         WITH RECURSIVE folder_tree AS (
-          SELECT id, parent_id, name, type FROM nodes WHERE parent_id IS NULL
+          SELECT id, parent_id, name, type FROM nodes WHERE parent_id IS NULL AND ${authCondition}
           UNION ALL
           SELECT n.id, n.parent_id, n.name, n.type FROM nodes n
           INNER JOIN folder_tree ft ON ft.id = n.parent_id
@@ -28,7 +33,7 @@ export async function POST(request: NextRequest) {
       `
       : await sql`
         WITH RECURSIVE folder_tree AS (
-          SELECT id, parent_id, name, type FROM nodes WHERE id = ${folderId}
+          SELECT id, parent_id, name, type FROM nodes WHERE id = ${folderId} AND ${authCondition}
           UNION ALL
           SELECT n.id, n.parent_id, n.name, n.type FROM nodes n
           INNER JOIN folder_tree ft ON ft.id = n.parent_id
@@ -72,22 +77,11 @@ export async function POST(request: NextRequest) {
     };
 
     const targetPrefix = path ? (path.endsWith('/') ? path : path + '/') : '';
-
     const prompt = `
-You are an expert file organizer and archivist.
-Your job is to look at a list of flat file paths and group them into a logical, clean folder hierarchy based on their topics, subjects, or file types.
-
-Here are the files:
+You are an expert file organizer. Look at these flat file paths and group them into logical folders based on topics/subjects.
+Files:
 ${JSON.stringify(filePaths, null, 2)}
-
-Instructions:
-1. Extract the implicit topics from the filenames (e.g., "Python", "Loops", "MCM", "Installation Guide").
-2. Group files that belong together into subfolders.
-3. Keep the target prefix "${targetPrefix}" as the root folder.
-4. For example, if a file is "${targetPrefix}06. Loops using while.mp4", you might move it to "${targetPrefix}Python Loops/06. Loops using while.mp4".
-5. Only suggest moves that actually place a file into a new subfolder. If it's already well-placed, ignore it.
-6. Return the list of moves in JSON format.
-    `;
+Return the list of moves in JSON format. Keep prefix "${targetPrefix}".`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.5-flash',
@@ -102,7 +96,6 @@ Instructions:
     const result = JSON.parse(response.text || '{}');
     const rawMoves = result.moves || [];
     
-    // Inject the DB IDs into the moves array so the execute route doesn't have to look them up by path
     const moves = rawMoves.map((m: any) => ({
       ...m,
       id: idMap.get(m.old_path),
@@ -110,10 +103,6 @@ Instructions:
 
     return NextResponse.json({ moves });
   } catch (error) {
-    console.error('Error generating organization plan:', error);
-    return NextResponse.json(
-      { error: 'Failed to generate organization plan' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed' }, { status: 500 });
   }
 }

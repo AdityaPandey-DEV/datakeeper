@@ -1,66 +1,74 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql, getFolderIdByPath, getPathByFolderId } from '@/lib/db';
-import { deleteFile as r2DeleteFile } from '@/lib/blob';
+import { FileItem } from '@/lib/blob';
+import { getAuthContext } from '@/lib/auth';
+import { deleteR2Keys } from '@/lib/blob';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await getAuthContext();
+    if (!auth) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const path = searchParams.get('path') || '';
-    const search = searchParams.get('search') || '';
+    const query = searchParams.get('query') || '';
 
-    const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
-    let items = [];
+    let items: FileItem[] = [];
 
-    if (search) {
-      // Very basic recursive search using ILIKE
-      const searchPattern = `%${search}%`;
-      const rows = await sql`
+    const authCondition = auth.type === 'user' ? sql`user_email = ${auth.value}` : sql`secret_code = ${auth.value}`;
+
+    if (query) {
+      // Global search for this user
+      const res = await sql`
         SELECT id, parent_id, name, type, r2_key, size, created_at 
         FROM nodes 
-        WHERE name ILIKE ${searchPattern}
+        WHERE name ILIKE ${'%' + query + '%'} AND ${authCondition}
       `;
-      
-      for (const row of rows) {
+      for (const row of res) {
         const itemPath = await getPathByFolderId(row.parent_id);
         const fullPath = itemPath ? `${itemPath}/${row.name}` : row.name;
-        
         items.push({
-          name: row.name,
-          type: row.type,
-          path: fullPath,
-          url: row.type === 'file' ? `${R2_PUBLIC_URL}/${encodeURI(row.r2_key)}` : undefined,
-          size: row.size,
-          uploadedAt: row.created_at,
           id: row.id,
+          name: row.name,
+          type: row.type as 'file' | 'folder',
+          path: fullPath,
+          url: row.r2_key ? `https://pub-8dff9b3e1e694fb48ad0d8a5de25e9a3.r2.dev/${row.r2_key}` : undefined,
+          size: row.size ? parseInt(row.size) : undefined,
+          uploadedAt: row.created_at,
         });
       }
     } else {
-      const folderId = await getFolderIdByPath(path);
+      // List specific folder
+      const folderId = await getFolderIdByPath(path, auth);
       
-      let rows;
+      let res;
       if (folderId === null) {
-        rows = await sql`SELECT * FROM nodes WHERE parent_id IS NULL ORDER BY type ASC, name ASC`;
+        res = await sql`SELECT id, parent_id, name, type, r2_key, size, created_at FROM nodes WHERE parent_id IS NULL AND ${authCondition}`;
       } else {
-        rows = await sql`SELECT * FROM nodes WHERE parent_id = ${folderId} ORDER BY type ASC, name ASC`;
+        res = await sql`SELECT id, parent_id, name, type, r2_key, size, created_at FROM nodes WHERE parent_id = ${folderId} AND ${authCondition}`;
       }
 
-      for (const row of rows) {
+      for (const row of res) {
         const fullPath = path ? `${path}/${row.name}` : row.name;
         items.push({
-          name: row.name,
-          type: row.type,
-          path: fullPath,
-          url: row.type === 'file' && row.r2_key ? `${R2_PUBLIC_URL}/${encodeURI(row.r2_key)}` : undefined,
-          size: row.size,
-          uploadedAt: row.created_at,
           id: row.id,
+          name: row.name,
+          type: row.type as 'file' | 'folder',
+          path: fullPath,
+          url: row.r2_key ? `https://pub-8dff9b3e1e694fb48ad0d8a5de25e9a3.r2.dev/${row.r2_key}` : undefined,
+          size: row.size ? parseInt(row.size) : undefined,
+          uploadedAt: row.created_at,
         });
       }
     }
 
     return NextResponse.json({ items });
   } catch (error) {
-    console.error('Error listing files:', error);
+    console.error('Error in GET /api/files:', error);
     return NextResponse.json(
       { error: 'Failed to list files' },
       { status: 500 }
@@ -70,27 +78,33 @@ export async function GET(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const { url, id } = await request.json(); // Front-end needs to send id
-
-    if (id) {
-      // Find the node
-      const rows = await sql`SELECT * FROM nodes WHERE id = ${id}`;
-      if (rows.length > 0) {
-        const node = rows[0];
-        // Delete from R2 if file
-        if (node.type === 'file' && node.r2_key) {
-          await r2DeleteFile(node.r2_key); // Use a new simple delete function
-        }
-        // Delete from DB
-        await sql`DELETE FROM nodes WHERE id = ${id}`;
-      }
-    } else if (url) {
-      // Fallback: finding by url logic
+    const auth = await getAuthContext();
+    if (!auth) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { url, id } = await request.json();
+    if (!id) {
+      return NextResponse.json({ error: 'ID is required' }, { status: 400 });
+    }
+
+    const authCondition = auth.type === 'user' ? sql`user_email = ${auth.value}` : sql`secret_code = ${auth.value}`;
+
+    // Verify ownership
+    const check = await sql`SELECT r2_key FROM nodes WHERE id = ${id} AND ${authCondition}`;
+    if (check.length === 0) {
+      return NextResponse.json({ error: 'Not found or unauthorized' }, { status: 404 });
+    }
+
+    const r2Key = check[0].r2_key;
+    if (r2Key) {
+       await deleteR2Keys([r2Key]);
+    }
+
+    await sql`DELETE FROM nodes WHERE id = ${id} AND ${authCondition}`;
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error deleting file:', error);
+    console.error('Delete error:', error);
     return NextResponse.json(
       { error: 'Failed to delete file' },
       { status: 500 }

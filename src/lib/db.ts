@@ -15,18 +15,20 @@ export interface Node {
 /**
  * Get folder ID by path.
  */
-export async function getFolderIdByPath(path: string): Promise<string | null> {
-  if (!path || path === '') return null; // root is null
+export async function getFolderIdByPath(path: string, auth: { type: string, value: string } | null): Promise<string | null> {
+  if (!path || path === '' || !auth) return null; // root is null
 
   const parts = path.split('/').filter(Boolean);
   
   let currentParentId = null;
+  const authCondition = auth.type === 'user' ? sql`user_email = ${auth.value}` : sql`secret_code = ${auth.value}`;
+
   for (const part of parts) {
     let res;
     if (currentParentId === null) {
-      res = await sql`SELECT id FROM nodes WHERE parent_id IS NULL AND name = ${part} AND type = 'folder' LIMIT 1`;
+      res = await sql`SELECT id FROM nodes WHERE parent_id IS NULL AND name = ${part} AND type = 'folder' AND ${authCondition} LIMIT 1`;
     } else {
-      res = await sql`SELECT id FROM nodes WHERE parent_id = ${currentParentId} AND name = ${part} AND type = 'folder' LIMIT 1`;
+      res = await sql`SELECT id FROM nodes WHERE parent_id = ${currentParentId} AND name = ${part} AND type = 'folder' AND ${authCondition} LIMIT 1`;
     }
 
     if (res.length === 0) {

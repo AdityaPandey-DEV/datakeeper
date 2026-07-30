@@ -1,66 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql, getFolderIdByPath } from '@/lib/db';
+import { getAuthContext } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
-    const { action, id, destinationPath, newName, sourceId } = await request.json();
-    
-    // Front-end passes 'id' or 'sourceId' now
-    const targetId = id || sourceId;
-
-    switch (action) {
-      case 'move-file':
-      case 'move-folder': {
-        if (!targetId || destinationPath === undefined) {
-          return NextResponse.json(
-            { error: 'id and destinationPath are required' },
-            { status: 400 }
-          );
-        }
-        
-        const parentId = await getFolderIdByPath(destinationPath);
-        await sql`UPDATE nodes SET parent_id = ${parentId} WHERE id = ${targetId}`;
-        
-        return NextResponse.json({ success: true });
-      }
-
-      case 'rename': {
-        if (!targetId || !newName) {
-          return NextResponse.json(
-            { error: 'id and newName are required' },
-            { status: 400 }
-          );
-        }
-        
-        await sql`UPDATE nodes SET name = ${newName} WHERE id = ${targetId}`;
-        return NextResponse.json({ success: true });
-      }
-
-      case 'list-folders': {
-        // Fetch all folders
-        const rows = await sql`SELECT * FROM nodes WHERE type = 'folder'`;
-        // Build simple array of paths for the UI
-        // Since getPathByFolderId queries per folder, we could optimize, but doing it simple for now
-        const folders = [];
-        for (const row of rows) {
-          // getPathByFolderId builds full path
-          // Actually, let's just return a placeholder, the UI uses it for a dropdown
-        }
-        // Optimized:
-        return NextResponse.json({ folders: [] }); // Temporary, we'll fix UI to not need this or implement recursive fetch.
-      }
-
-      default:
-        return NextResponse.json(
-          { error: 'Invalid action.' },
-          { status: 400 }
-        );
+    const auth = await getAuthContext();
+    if (!auth) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-  } catch (error) {
-    console.error('Move error:', error);
-    return NextResponse.json(
-      { error: 'Failed to perform move operation' },
-      { status: 500 }
-    );
+
+    const { action, id, newName, destinationPath } = await request.json();
+
+    if (!id) {
+      return NextResponse.json({ error: 'ID is required' }, { status: 400 });
+    }
+
+    const authCondition = auth.type === 'user' ? sql`user_email = ${auth.value}` : sql`secret_code = ${auth.value}`;
+
+    // Verify ownership
+    const check = await sql`SELECT id FROM nodes WHERE id = ${id} AND ${authCondition}`;
+    if (check.length === 0) {
+      return NextResponse.json({ error: 'Not found or unauthorized' }, { status: 404 });
+    }
+
+    if (action === 'rename') {
+      if (!newName) return NextResponse.json({ error: 'newName required' }, { status: 400 });
+      await sql`UPDATE nodes SET name = ${newName} WHERE id = ${id} AND ${authCondition}`;
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === 'move-file' || action === 'move-folder') {
+      const parentId = await getFolderIdByPath(destinationPath || '', auth);
+      await sql`UPDATE nodes SET parent_id = ${parentId} WHERE id = ${id} AND ${authCondition}`;
+      return NextResponse.json({ success: true });
+    }
+
+    return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
+  } catch (error: any) {
+    console.error('Move/Rename error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
