@@ -42,6 +42,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
   const [isAIOrganizeOpen, setIsAIOrganizeOpen] = useState(false);
   const [isAILoading, setIsAILoading] = useState(false);
   const [aiMoves, setAiMoves] = useState<AIMove[]>([]);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   // Debounce search query
   useEffect(() => {
@@ -320,6 +321,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
     setIsAIOrganizeOpen(true);
     setIsAILoading(true);
     setAiMoves([]);
+    setAiError(null);
     try {
       const res = await fetch('/api/organize/preview', {
         method: 'POST',
@@ -327,11 +329,14 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
         body: JSON.stringify({ path: initialPath }),
       });
       const data = await res.json();
-      if (data.moves) {
+      if (!res.ok) {
+        setAiError(data.error || 'Failed to generate plan.');
+      } else if (data.moves) {
         setAiMoves(data.moves);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to get AI plan:', err);
+      setAiError(err.message || 'Network error.');
     } finally {
       setIsAILoading(false);
     }
@@ -446,6 +451,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
         isOpen={isAIOrganizeOpen}
         isLoading={isAILoading}
         moves={aiMoves}
+        error={aiError}
         onClose={() => setIsAIOrganizeOpen(false)}
         onConfirm={handleAIOrganizeConfirm}
         currentPath={initialPath}

@@ -11,6 +11,7 @@ interface AIOrganizeDialogProps {
   isOpen: boolean;
   isLoading: boolean;
   moves: AIMove[];
+  error?: string | null;
   onClose: () => void;
   onConfirm: () => void;
   currentPath: string;
@@ -20,6 +21,7 @@ export function AIOrganizeDialog({
   isOpen,
   isLoading,
   moves,
+  error,
   onClose,
   onConfirm,
   currentPath,
@@ -58,6 +60,11 @@ export function AIOrganizeDialog({
               <p style={{ fontSize: '0.875rem', color: 'var(--text-tertiary)', marginTop: '8px' }}>
                 Looking at {currentPath || 'root'} and all child folders.
               </p>
+            </div>
+          ) : error ? (
+            <div style={{ padding: '40px', textAlign: 'center', color: 'var(--red)' }}>
+              <p style={{ fontWeight: 600 }}>Error Generating Plan</p>
+              <p style={{ fontSize: '0.875rem', marginTop: '8px' }}>{error}</p>
             </div>
           ) : moves.length === 0 ? (
             <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
