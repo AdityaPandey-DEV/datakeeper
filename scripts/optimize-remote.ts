@@ -11,6 +11,22 @@ try {
 }
 
 const CONCURRENCY = 4;
+const CACHE_FILE = path.resolve(__dirname, '../.optimized-cache.json');
+
+// Load/save cache of already-optimized video pathnames
+function loadCache(): Set<string> {
+  try {
+    if (fs.existsSync(CACHE_FILE)) {
+      const data = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8'));
+      return new Set(data);
+    }
+  } catch {}
+  return new Set();
+}
+
+function saveCache(cache: Set<string>) {
+  fs.writeFileSync(CACHE_FILE, JSON.stringify([...cache], null, 2));
+}
 
 function loadEnvLocal() {
   const envPath = path.resolve(__dirname, '../.env.local');
@@ -56,19 +72,31 @@ async function runPool<T>(items: T[], n: number, fn: (item: T, i: number) => Pro
 async function main() {
   if (!ffmpegPath) { console.error('❌ ffmpeg-static not available.'); process.exit(1); }
 
+  const cache = loadCache();
+  const forceAll = process.argv.includes('--force');
+
   console.log('🔍 Listing all videos in DataKeeper cloud...');
   let cursor: string | undefined;
   let hasMore = true;
-  const videos: { url: string; pathname: string; size: number }[] = [];
+  const allVideos: { url: string; pathname: string; size: number }[] = [];
 
   while (hasMore) {
     const r = await list({ cursor, limit: 1000, token: TOKEN });
-    for (const b of r.blobs) if (isVideoFile(b.pathname)) videos.push({ url: b.url, pathname: b.pathname, size: b.size });
+    for (const b of r.blobs) if (isVideoFile(b.pathname)) allVideos.push({ url: b.url, pathname: b.pathname, size: b.size });
     hasMore = r.hasMore;
     cursor = r.cursor;
   }
 
-  console.log(`🚀 Found ${videos.length} video(s) in cloud.`);
+  // Filter out already-optimized videos (unless --force)
+  const videos = forceAll ? allVideos : allVideos.filter(v => !cache.has(v.pathname));
+  const skipped = allVideos.length - videos.length;
+
+  console.log(`📊 Found ${allVideos.length} video(s) total, ${skipped} already optimized, ${videos.length} to fix.`);
+  if (videos.length === 0) {
+    console.log('✅ All videos are already optimized! Nothing to do.');
+    console.log('   (Use --force to re-optimize everything)');
+    return;
+  }
   console.log(`⚡ ${CONCURRENCY} parallel workers | CRF 23 visually-lossless compression\n`);
 
   await runPool(videos, CONCURRENCY, async (blob, i) => {
@@ -123,6 +151,10 @@ async function main() {
         contentType: 'video/mp4', token: TOKEN,
       });
 
+      // Mark as optimized in cache
+      cache.add(blob.pathname);
+      saveCache(cache);
+
       console.log(`${tag} ✅ Done!\n`);
     } catch (err: any) {
       console.error(`${tag} ❌ ${err.message}\n`);
@@ -132,7 +164,7 @@ async function main() {
     }
   });
 
-  console.log('🎉 All cloud videos compressed & web-ready!');
+  console.log('🎉 All unoptimized cloud videos have been compressed & fixed for web playback!');
 }
 
 main().catch(e => { console.error('Fatal:', e); process.exit(1); });

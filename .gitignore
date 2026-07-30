@@ -43,3 +43,6 @@ next-env.d.ts
 # agent config files
 AGENTS.md
 CLAUDE.md
+
+# optimization cache
+.optimized-cache.json
