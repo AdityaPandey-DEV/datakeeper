@@ -9,7 +9,7 @@ export function Footer() {
             Maintained by <span className="footer-name">Aditya Pandey</span>
           </p>
           <p className="footer-tech">
-            Built with Next.js + Vercel Blob
+            Built with Next.js + Cloudflare R2
           </p>
         </div>
         <div className="footer-right">
