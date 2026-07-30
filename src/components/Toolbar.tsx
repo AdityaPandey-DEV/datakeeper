@@ -3,6 +3,7 @@
 interface ToolbarProps {
   onNewFolder: () => void;
   onUpload: () => void;
+  onAIOrganize: () => void;
   selectedCount: number;
   onMoveSelected: () => void;
   onDeleteSelected: () => void;
@@ -13,6 +14,7 @@ interface ToolbarProps {
 export function Toolbar({
   onNewFolder,
   onUpload,
+  onAIOrganize,
   selectedCount,
   onMoveSelected,
   onDeleteSelected,
@@ -37,6 +39,9 @@ export function Toolbar({
             <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
           </svg>
           Upload
+        </button>
+        <button className="toolbar-btn" onClick={onAIOrganize} style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}>
+          <span style={{ marginRight: '4px' }}>✨</span> AI Organize
         </button>
       </div>
       {selectedCount > 0 && (

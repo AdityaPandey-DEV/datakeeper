@@ -11,6 +11,7 @@ import { NewFolderDialog } from './NewFolderDialog';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 import { MoveDialog } from './MoveDialog';
 import { FilePreview } from './FilePreview';
+import { AIOrganizeDialog, type AIMove } from './AIOrganizeDialog';
 
 interface FileBrowserProps {
   initialPath: string;
@@ -36,6 +37,11 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
   const [isBulkDelete, setIsBulkDelete] = useState(false);
   const [isBulkMove, setIsBulkMove] = useState(false);
   const [isOperating, setIsOperating] = useState(false);
+
+  // AI Organize state
+  const [isAIOrganizeOpen, setIsAIOrganizeOpen] = useState(false);
+  const [isAILoading, setIsAILoading] = useState(false);
+  const [aiMoves, setAiMoves] = useState<AIMove[]>([]);
 
   // Debounce search query
   useEffect(() => {
@@ -310,6 +316,41 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
     }
   };
 
+  const handleAIOrganizeClick = async () => {
+    setIsAIOrganizeOpen(true);
+    setIsAILoading(true);
+    setAiMoves([]);
+    try {
+      const res = await fetch('/api/organize/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: initialPath }),
+      });
+      const data = await res.json();
+      if (data.moves) {
+        setAiMoves(data.moves);
+      }
+    } catch (err) {
+      console.error('Failed to get AI plan:', err);
+    } finally {
+      setIsAILoading(false);
+    }
+  };
+
+  const handleAIOrganizeConfirm = async () => {
+    try {
+      await fetch('/api/organize/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ moves: aiMoves }),
+      });
+      setIsAIOrganizeOpen(false);
+      await fetchFiles();
+    } catch (err) {
+      console.error('Failed to execute AI plan:', err);
+    }
+  };
+
   return (
     <div className="file-browser">
       <Breadcrumb path={initialPath} />
@@ -319,6 +360,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
       <Toolbar
         onNewFolder={() => setShowNewFolder(true)}
         onUpload={() => uploadInputRef.current?.click()}
+        onAIOrganize={handleAIOrganizeClick}
         selectedCount={selectedItems.size}
         onMoveSelected={() => setIsBulkMove(true)}
         onDeleteSelected={() => setIsBulkDelete(true)}
@@ -398,6 +440,15 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
         fileName={previewTarget?.name || ''}
         fileUrl={previewTarget?.url || ''}
         onClose={() => setPreviewTarget(null)}
+      />
+
+      <AIOrganizeDialog
+        isOpen={isAIOrganizeOpen}
+        isLoading={isAILoading}
+        moves={aiMoves}
+        onClose={() => setIsAIOrganizeOpen(false)}
+        onConfirm={handleAIOrganizeConfirm}
+        currentPath={initialPath}
       />
     </div>
   );
