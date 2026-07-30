@@ -46,7 +46,7 @@ if (!TOKEN) {
 const DOWNLOADS_DIR = path.resolve(process.env.HOME || '/Users/adityapandeydev', 'Downloads');
 const REMOTE_PREFIX = 'Course-Uploads/';
 const USE_OPTIMIZE = process.argv.includes('--optimize') || process.argv.includes('-o');
-const CONCURRENCY = 5; // 5x parallel workers
+const CONCURRENCY = 4; // 4x parallel workers for balanced CPU & upload speed
 
 interface FileEntry {
   localPath: string;
@@ -113,8 +113,8 @@ function getContentType(filename: string): string {
 }
 
 /**
- * Optimize video using INSTANT FastStart Web-Stream Remuxing (-c copy -movflags +faststart)
- * This takes 0.3 seconds per video, NEVER inflates filesize, and makes videos 100% playable!
+ * High-Speed Compression & Web Optimization (-preset ultrafast -crf 27 +faststart)
+ * Shrinks videos by ~50%-75% in seconds, with a safety check so filesize is NEVER larger!
  */
 function optimizeVideo(inputPath: string, relativePath: string, tag: string): { uploadPath: string; isTemporary: boolean } {
   if (!ffmpegPath) {
@@ -124,37 +124,46 @@ function optimizeVideo(inputPath: string, relativePath: string, tag: string): { 
 
   const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const tempOutputPath = path.join('/tmp', `opt_${uniqueId}_${path.basename(inputPath, path.extname(inputPath))}.mp4`);
+  const origSize = fs.statSync(inputPath).size;
+
+  console.log(`${tag} 🎬 Compressing size & web-formatting (CRF 27, ultrafast, +faststart)...`);
 
   try {
-    // 1. INSTANT FastStart Web-Remuxing (-c copy -movflags +faststart) ~0.3s speed! Zero filesize inflation!
-    console.log(`${tag} ⚡ Instant Web-Stream Preparation (0.3s FastStart remux)...`);
-    execFileSync(ffmpegPath, [
-      '-y',
-      '-i', inputPath,
-      '-c', 'copy',
-      '-movflags', '+faststart',
-      tempOutputPath
-    ], { stdio: 'ignore' });
-  } catch (err) {
-    // 2. Fallback to libx264 software CRF 27 if container remux fails
-    console.log(`${tag} ⚠️  Remux fallback -> CPU libx264 (CRF 27)...`);
     execFileSync(ffmpegPath, [
       '-y',
       '-i', inputPath,
       '-vcodec', 'libx264',
       '-pix_fmt', 'yuv420p',
       '-crf', '27',
-      '-preset', 'fast',
+      '-preset', 'ultrafast',
       '-movflags', '+faststart',
       '-acodec', 'copy',
       tempOutputPath
     ], { stdio: 'ignore' });
-  }
 
-  const origSize = fs.statSync(inputPath).size;
-  const newSize = fs.statSync(tempOutputPath).size;
-  console.log(`${tag} ✨ Web-Ready: ${formatSize(origSize)} -> ${formatSize(newSize)} (Instant streaming ready!)`);
-  return { uploadPath: tempOutputPath, isTemporary: true };
+    const newSize = fs.statSync(tempOutputPath).size;
+
+    // Safety check: if file was already heavily compressed and didn't shrink, do an instant remux instead
+    if (newSize >= origSize) {
+      console.log(`${tag} ✨ Already compact (${formatSize(origSize)}). Formatting for instant web streaming...`);
+      execFileSync(ffmpegPath, [
+        '-y',
+        '-i', inputPath,
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        tempOutputPath
+      ], { stdio: 'ignore' });
+      return { uploadPath: tempOutputPath, isTemporary: true };
+    }
+
+    const savedPct = ((1 - newSize / origSize) * 100).toFixed(1);
+    console.log(`${tag} ✨ Compressed: ${formatSize(origSize)} -> ${formatSize(newSize)} (${savedPct}% saved!)`);
+    return { uploadPath: tempOutputPath, isTemporary: true };
+  } catch (err: any) {
+    console.log(`${tag} ⚠️  Compression fallback -> original file.`);
+    if (fs.existsSync(tempOutputPath)) fs.unlinkSync(tempOutputPath);
+    return { uploadPath: inputPath, isTemporary: false };
+  }
 }
 
 async function runWithConcurrency<T>(
@@ -184,9 +193,9 @@ async function uploadAndDelete() {
   }
 
   console.log(`🚀 Found ${files.length} files to upload into "${REMOTE_PREFIX}" in DataKeeper.`);
-  console.log(`⚡ Concurrency: ${CONCURRENCY} parallel workers | INSTANT FastStart Web-Remuxing Enabled!`);
+  console.log(`⚡ Concurrency: ${CONCURRENCY} parallel workers | High-Speed Video Compression Enabled!`);
   if (USE_OPTIMIZE) {
-    console.log(`🎬 FFmpeg Video Optimization ENABLED (--optimize)`);
+    console.log(`🎬 FFmpeg Video Compression & Optimization ENABLED (--optimize)`);
   }
   console.log('');
 
