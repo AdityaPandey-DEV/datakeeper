@@ -1,0 +1,18 @@
+name: Cleanup Expired Files
+
+on:
+  schedule:
+    # Run every hour
+    - cron: '0 * * * *'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit Cleanup Endpoint
+        run: |
+          # If you set a CRON_SECRET in Vercel, add it as a GitHub Secret and uncomment the header below:
+          # curl -v -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" https://datakeeper-dev.vercel.app/api/cron/cleanup
+          
+          curl -v https://datakeeper-dev.vercel.app/api/cron/cleanup
