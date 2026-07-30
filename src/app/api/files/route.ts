@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql, getFolderIdByPath, getPathByFolderId } from '@/lib/db';
 import { FileItem } from '@/lib/blob';
 import { getAuthContext } from '@/lib/auth';
-import { deleteR2Keys } from '@/lib/blob';
+import { deleteR2Keys, getPresignedDownloadUrl } from '@/lib/blob';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
           name: row.name,
           type: row.type as 'file' | 'folder',
           path: fullPath,
-          url: row.r2_key ? `https://pub-8dff9b3e1e694fb48ad0d8a5de25e9a3.r2.dev/${row.r2_key}` : undefined,
+          url: row.r2_key ? await getPresignedDownloadUrl(row.r2_key) : undefined,
           size: row.size ? parseInt(row.size) : undefined,
           uploadedAt: row.created_at,
         });
@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
           name: row.name,
           type: row.type as 'file' | 'folder',
           path: fullPath,
-          url: row.r2_key ? `https://pub-8dff9b3e1e694fb48ad0d8a5de25e9a3.r2.dev/${row.r2_key}` : undefined,
+          url: row.r2_key ? await getPresignedDownloadUrl(row.r2_key) : undefined,
           size: row.size ? parseInt(row.size) : undefined,
           uploadedAt: row.created_at,
         });

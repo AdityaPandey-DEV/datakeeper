@@ -1,5 +1,5 @@
-import {
-  S3Client,
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { S3Client, GetObjectCommand,
   ListObjectsV2Command,
   DeleteObjectCommand,
   DeleteObjectsCommand,
@@ -510,4 +510,13 @@ export async function deleteR2Keys(keys: string[]): Promise<void> {
     });
     await s3.send(command);
   }
+}
+
+export async function getPresignedDownloadUrl(key: string): Promise<string> {
+  const s3 = getS3Client();
+  const command = new GetObjectCommand({
+    Bucket: getBucketName(),
+    Key: key,
+  });
+  return getSignedUrl(s3, command, { expiresIn: 3600 * 24 }); // 24 hours
 }
