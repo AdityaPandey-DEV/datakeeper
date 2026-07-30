@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "upload-downloads": "npx tsx scripts/upload-downloads.ts",
-    "upload-downloads:optimize": "npx tsx scripts/upload-downloads.ts --optimize"
+    "upload-downloads:optimize": "npx tsx scripts/upload-downloads.ts --optimize",
+    "fix-types": "npx tsx scripts/fix-content-types.ts"
   },
   "dependencies": {
     "@vercel/blob": "^2.6.1",
