@@ -3,6 +3,7 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
+import { neon } from '@neondatabase/serverless';
 
 let ffmpegPath: string | null = null;
 try {
@@ -38,7 +39,7 @@ const accessKeyId = process.env.R2_ACCESS_KEY_ID;
 const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
 const endpoint = process.env.R2_ENDPOINT;
 const bucketName = process.env.R2_BUCKET_NAME || 'datakeeper';
-const publicUrl = process.env.R2_PUBLIC_URL || '';
+const USER_EMAIL = 'adityapandey.dev.in@gmail.com';
 
 if (!accessKeyId || !secretAccessKey || !endpoint) {
   console.error('❌ Missing R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, or R2_ENDPOINT.');
@@ -54,8 +55,10 @@ const s3 = new S3Client({
   },
 });
 
+const sql = neon(process.env.POSTGRES_URL!);
+
 const DOWNLOADS_DIR = path.resolve(process.env.HOME || '/Users/adityapandeydev', 'Downloads');
-const REMOTE_PREFIX = 'Course-Uploads/';
+const REMOTE_PREFIX = `${USER_EMAIL}/Course-Uploads/`;
 const USE_OPTIMIZE = process.argv.includes('--optimize') || process.argv.includes('-o');
 const CONCURRENCY = 4;
 
@@ -146,8 +149,6 @@ function optimizeVideo(inputPath: string, tag: string): string {
     console.log(`${tag} ✨ Compressed: ${formatSize(origSize)} → ${formatSize(newSize)} (${pct}% smaller, 0 quality loss!)`);
   }
 
-  // Replace original file with the compressed one immediately.
-  // This saves computing power because if the upload fails, the local file is already permanently shrunken!
   const targetPath = inputPath.endsWith('.mp4') ? inputPath : inputPath.slice(0, inputPath.lastIndexOf('.')) + '.mp4';
   
   if (inputPath !== targetPath && fs.existsSync(inputPath)) {
@@ -157,6 +158,28 @@ function optimizeVideo(inputPath: string, tag: string): string {
   fs.renameSync(tempOut, targetPath);
   
   return targetPath;
+}
+
+async function getOrCreateFolder(pathStr: string): Promise<string | null> {
+  if (!pathStr || pathStr === '') return null;
+  const parts = pathStr.replace(/\/$/, '').split('/');
+  let currentParentId = null;
+  for (const part of parts) {
+    let res = currentParentId === null
+      ? await sql`SELECT id FROM nodes WHERE parent_id IS NULL AND name = ${part} AND type = 'folder' AND user_email = ${USER_EMAIL}`
+      : await sql`SELECT id FROM nodes WHERE parent_id = ${currentParentId} AND name = ${part} AND type = 'folder' AND user_email = ${USER_EMAIL}`;
+    
+    if (res.length > 0) {
+      currentParentId = res[0].id;
+    } else {
+      const insertRes = await sql`
+        INSERT INTO nodes (parent_id, name, type, user_email) 
+        VALUES (${currentParentId}, ${part}, 'folder', ${USER_EMAIL}) RETURNING id
+      `;
+      currentParentId = insertRes[0].id;
+    }
+  }
+  return currentParentId;
 }
 
 async function runPool<T>(items: T[], n: number, fn: (item: T, i: number) => Promise<void>) {
@@ -205,7 +228,23 @@ async function main() {
 
       await upload.done();
       
-      console.log(`${tag} ✅ → ${remotePath}`);
+      // Upsert to DB
+      const parts = remotePath.split('/');
+      const name = parts.pop()!;
+      const parentPath = parts.join('/');
+      const parentId = await getOrCreateFolder(parentPath);
+      
+      const existing = await sql`SELECT id FROM nodes WHERE parent_id ${parentId === null ? sql`IS NULL` : sql`= ${parentId}`} AND name = ${name} AND type = 'file' AND user_email = ${USER_EMAIL}`;
+      if (existing.length === 0) {
+        await sql`
+          INSERT INTO nodes (parent_id, name, type, r2_key, size, user_email)
+          VALUES (${parentId}, ${name}, 'file', ${remotePath}, ${file.size}, ${USER_EMAIL})
+        `;
+      } else {
+        await sql`UPDATE nodes SET r2_key = ${remotePath}, size = ${file.size} WHERE id = ${existing[0].id}`;
+      }
+
+      console.log(`${tag} ✅ → ${remotePath} (Saved to DB)`);
       if (fs.existsSync(src)) fs.unlinkSync(src);
       console.log(`${tag} 🗑️  Deleted local\n`);
     } catch (err: any) {
