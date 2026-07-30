@@ -155,13 +155,13 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
         await fetch('/api/files', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: deleteTarget.url }),
+          body: JSON.stringify({ url: deleteTarget.url, id: deleteTarget.id }),
         });
       } else {
         await fetch('/api/folder', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: deleteTarget.path }),
+          body: JSON.stringify({ path: deleteTarget.path, id: deleteTarget.id }),
         });
       }
       setDeleteTarget(null);
@@ -186,13 +186,13 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
           await fetch('/api/files', {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: item.url }),
+            body: JSON.stringify({ url: item.url, id: item.id }),
           });
         } else {
           await fetch('/api/folder', {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: item.path }),
+            body: JSON.stringify({ path: item.path, id: item.id }),
           });
         }
       }
@@ -220,6 +220,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'move-file',
+            id: moveTarget.id,
             sourceUrl: moveTarget.url,
             destinationPath: destPath,
           }),
@@ -233,6 +234,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'move-folder',
+            id: moveTarget.id,
             sourcePath: moveTarget.path,
             destinationPath: destPath,
           }),
@@ -265,6 +267,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               action: 'move-file',
+              id: item.id,
               sourceUrl: item.url,
               destinationPath: destPath,
             }),
@@ -278,6 +281,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               action: 'move-folder',
+              id: item.id,
               sourcePath: item.path,
               destinationPath: destPath,
             }),
@@ -304,6 +308,7 @@ export function FileBrowser({ initialPath }: FileBrowserProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'rename',
+          id: item.id,
           sourceUrl: item.url,
           sourcePath: item.path,
           newName,

@@ -1,86 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { S3Client, CopyObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
-
-function getS3Client() {
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-  const endpoint = process.env.R2_ENDPOINT;
-
-  if (!accessKeyId || !secretAccessKey || !endpoint) {
-    throw new Error('Missing Cloudflare R2 environment variables.');
-  }
-
-  return new S3Client({
-    region: 'auto',
-    endpoint: endpoint,
-    credentials: {
-      accessKeyId: accessKeyId,
-      secretAccessKey: secretAccessKey,
-    },
-  });
-}
-
-function getBucketName() {
-  return process.env.R2_BUCKET_NAME || 'datakeeper';
-}
+import { sql, getFolderIdByPath } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   try {
     const { moves } = await request.json();
 
-    if (!Array.isArray(moves) || moves.length === 0) {
-      return NextResponse.json(
-        { error: 'Invalid or empty moves array' },
-        { status: 400 }
-      );
+    if (!moves || !Array.isArray(moves)) {
+      return NextResponse.json({ error: 'Moves array is required' }, { status: 400 });
     }
 
-    const s3 = getS3Client();
-    const bucket = getBucketName();
+    const results = [];
 
-    const results: any[] = [];
-
-    // Helper to chunk the array for concurrency
-    const chunkArray = <T,>(arr: T[], size: number): T[][] => {
-      return Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
-        arr.slice(i * size, i * size + size)
-      );
+    // Helper to get or create folders on the fly
+    const getOrCreateFolder = async (folderPath: string) => {
+        if (!folderPath || folderPath === '') return null;
+        const parentParts = folderPath.replace(/\/$/, '').split('/');
+        let currParentId = null;
+        for (const part of parentParts) {
+            const res: any[] = await sql`SELECT id FROM nodes WHERE parent_id ${currParentId === null ? sql`IS NULL` : sql`= ${currParentId}`} AND name = ${part} AND type = 'folder'`;
+            if (res.length > 0) {
+                currParentId = res[0].id;
+            } else {
+                const insertRes: any[] = await sql`INSERT INTO nodes (parent_id, name, type) VALUES (${currParentId}, ${part}, 'folder') RETURNING id`;
+                currParentId = insertRes[0].id;
+            }
+        }
+        return currParentId;
     };
 
-    const chunks = chunkArray(moves, 10); // Process 10 files concurrently
+    // We can do this serially, it will be extremely fast because it's just DB queries
+    for (const move of moves) {
+      if (!move.old_path || !move.new_path || !move.id) continue;
 
-    for (const chunk of chunks) {
-      await Promise.all(chunk.map(async (move: any) => {
-        if (!move.old_path || !move.new_path) return;
+      try {
+        const parts = move.new_path.split('/');
+        const name = parts.pop();
+        const parentPath = parts.join('/');
+        
+        const parentId = await getOrCreateFolder(parentPath);
+        
+        // Update the file's parent_id and name
+        await sql`
+            UPDATE nodes 
+            SET parent_id = ${parentId}, name = ${name}
+            WHERE id = ${move.id}
+        `;
 
-        try {
-          // 1. Copy
-          await s3.send(new CopyObjectCommand({
-            Bucket: bucket,
-            CopySource: `${bucket}/${encodeURI(move.old_path)}`,
-            Key: move.new_path,
-          }));
-
-          // 2. Delete
-          await s3.send(new DeleteObjectCommand({
-            Bucket: bucket,
-            Key: move.old_path,
-          }));
-
-          results.push({ ...move, success: true });
-        } catch (err: any) {
-          console.error(`Failed to move ${move.old_path} to ${move.new_path}:`, err);
-          results.push({ ...move, success: false, error: err.message });
-        }
-      }));
+        results.push({ ...move, success: true });
+      } catch (err: any) {
+        console.error(`Failed to move ${move.old_path} to ${move.new_path}:`, err);
+        results.push({ ...move, success: false, error: err.message });
+      }
     }
 
     return NextResponse.json({ success: true, results });
-  } catch (error) {
-    console.error('Error executing organization plan:', error);
-    return NextResponse.json(
-      { error: 'Failed to execute organization plan' },
-      { status: 500 }
-    );
+  } catch (error: any) {
+    console.error('Execute error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { searchFiles } from '@/lib/blob';
+import { sql, getPathByFolderId, getFolderIdByPath } from '@/lib/db';
 import { GoogleGenAI, Type, Schema } from '@google/genai';
 
 export const dynamic = 'force-dynamic';
@@ -13,12 +13,38 @@ export async function POST(request: NextRequest) {
     }
 
     // List all files starting from this path recursively
-    const items = await searchFiles(path || '', '');
+    const folderId = await getFolderIdByPath(path || '');
     
-    // Only send the paths of actual files (not folders)
-    const filePaths = items
-      .filter(i => i.type === 'file')
-      .map(i => i.path);
+    // We will do a recursive fetch of files
+    const rows = folderId === null 
+      ? await sql`
+        WITH RECURSIVE folder_tree AS (
+          SELECT id, parent_id, name, type FROM nodes WHERE parent_id IS NULL
+          UNION ALL
+          SELECT n.id, n.parent_id, n.name, n.type FROM nodes n
+          INNER JOIN folder_tree ft ON ft.id = n.parent_id
+        )
+        SELECT * FROM folder_tree WHERE type = 'file'
+      `
+      : await sql`
+        WITH RECURSIVE folder_tree AS (
+          SELECT id, parent_id, name, type FROM nodes WHERE id = ${folderId}
+          UNION ALL
+          SELECT n.id, n.parent_id, n.name, n.type FROM nodes n
+          INNER JOIN folder_tree ft ON ft.id = n.parent_id
+        )
+        SELECT * FROM folder_tree WHERE type = 'file' AND id != ${folderId}
+      `;
+    
+    const idMap = new Map<string, string>();
+    const filePaths = [];
+    
+    for (const row of rows) {
+      const itemPath = await getPathByFolderId(row.parent_id);
+      const fullPath = itemPath ? `${itemPath}/${row.name}` : row.name;
+      filePaths.push(fullPath);
+      idMap.set(fullPath, row.id);
+    }
 
     if (filePaths.length === 0) {
       return NextResponse.json({ moves: [] });
@@ -74,7 +100,13 @@ Instructions:
     });
 
     const result = JSON.parse(response.text || '{}');
-    const moves = result.moves || [];
+    const rawMoves = result.moves || [];
+    
+    // Inject the DB IDs into the moves array so the execute route doesn't have to look them up by path
+    const moves = rawMoves.map((m: any) => ({
+      ...m,
+      id: idMap.get(m.old_path),
+    })).filter((m: any) => m.id);
 
     return NextResponse.json({ moves });
   } catch (error) {

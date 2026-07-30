@@ -45,6 +45,7 @@ function getPublicUrl(key: string) {
 }
 
 export interface FileItem {
+  id?: string;
   name: string;
   type: 'file' | 'folder';
   path: string;
@@ -487,4 +488,26 @@ export function formatFileSize(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   const size = bytes / Math.pow(1024, i);
   return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+export async function deleteR2Keys(keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  const s3 = getS3Client();
+  const bucket = getBucketName();
+
+  const chunks = [];
+  for (let i = 0; i < keys.length; i += 1000) {
+    chunks.push(keys.slice(i, i + 1000));
+  }
+
+  for (const chunk of chunks) {
+    const command = new DeleteObjectsCommand({
+      Bucket: bucket,
+      Delete: {
+        Objects: chunk.map(key => ({ Key: key })),
+        Quiet: true,
+      }
+    });
+    await s3.send(command);
+  }
 }
