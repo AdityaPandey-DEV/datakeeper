@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     const s3 = getS3Client();
     const bucket = getBucketName();
 
-    const results = [];
+    const results: any[] = [];
 
     // Helper to chunk the array for concurrency
     const chunkArray = <T,>(arr: T[], size: number): T[][] => {
