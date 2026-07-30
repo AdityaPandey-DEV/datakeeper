@@ -3,7 +3,6 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { list, put } from '@vercel/blob';
 
-// Optional static ffmpeg binary if available
 let ffmpegPath: string | null = null;
 try {
   ffmpegPath = require('ffmpeg-static');
@@ -11,9 +10,8 @@ try {
   ffmpegPath = null;
 }
 
-const CONCURRENCY = 4; // 4x parallel workers for balanced CPU compression
+const CONCURRENCY = 4;
 
-// Load BLOB_READ_WRITE_TOKEN from .env.local
 function loadEnvLocal() {
   const envPath = path.resolve(__dirname, '../.env.local');
   if (fs.existsSync(envPath)) {
@@ -24,9 +22,7 @@ function loadEnvLocal() {
         const [key, ...valueParts] = trimmed.split('=');
         if (key && valueParts.length > 0) {
           let val = valueParts.join('=').trim();
-          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-            val = val.slice(1, -1);
-          }
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) val = val.slice(1, -1);
           if (!process.env[key.trim()]) process.env[key.trim()] = val;
         }
       }
@@ -37,10 +33,7 @@ function loadEnvLocal() {
 loadEnvLocal();
 
 const TOKEN = process.env.BLOB_READ_WRITE_TOKEN || process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
-if (!TOKEN) {
-  console.error('❌ Error: BLOB_READ_WRITE_TOKEN is not set.');
-  process.exit(1);
-}
+if (!TOKEN) { console.error('❌ BLOB_READ_WRITE_TOKEN not set.'); process.exit(1); }
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -49,139 +42,97 @@ function formatSize(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-function isVideoFile(filename: string): boolean {
-  const ext = path.extname(filename).toLowerCase();
-  return ['.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'].includes(ext);
+function isVideoFile(f: string): boolean {
+  return ['.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'].includes(path.extname(f).toLowerCase());
 }
 
-async function runWithConcurrency<T>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<void>
-) {
-  let currentIndex = 0;
-  const workers = Array(Math.min(concurrency, items.length))
-    .fill(0)
-    .map(async () => {
-      while (currentIndex < items.length) {
-        const index = currentIndex++;
-        await worker(items[index], index);
-      }
-    });
-  await Promise.all(workers);
+async function runPool<T>(items: T[], n: number, fn: (item: T, i: number) => Promise<void>) {
+  let idx = 0;
+  await Promise.all(Array(Math.min(n, items.length)).fill(0).map(async () => {
+    while (idx < items.length) { const i = idx++; await fn(items[i], i); }
+  }));
 }
 
-async function optimizeRemoteVideos() {
-  if (!ffmpegPath) {
-    console.error('❌ Error: ffmpeg-static is not available.');
-    process.exit(1);
-  }
+async function main() {
+  if (!ffmpegPath) { console.error('❌ ffmpeg-static not available.'); process.exit(1); }
 
-  console.log('🔍 Listing all videos in your DataKeeper cloud...');
+  console.log('🔍 Listing all videos in DataKeeper cloud...');
   let cursor: string | undefined;
   let hasMore = true;
-  const videoBlobs: { url: string; pathname: string; size: number }[] = [];
+  const videos: { url: string; pathname: string; size: number }[] = [];
 
   while (hasMore) {
-    const response = await list({ cursor, limit: 1000, token: TOKEN });
-    for (const blob of response.blobs) {
-      if (isVideoFile(blob.pathname)) {
-        videoBlobs.push({
-          url: blob.url,
-          pathname: blob.pathname,
-          size: blob.size,
-        });
-      }
-    }
-    hasMore = response.hasMore;
-    cursor = response.cursor;
+    const r = await list({ cursor, limit: 1000, token: TOKEN });
+    for (const b of r.blobs) if (isVideoFile(b.pathname)) videos.push({ url: b.url, pathname: b.pathname, size: b.size });
+    hasMore = r.hasMore;
+    cursor = r.cursor;
   }
 
-  console.log(`🚀 Found ${videoBlobs.length} video(s) in cloud.`);
-  console.log(`⚡ Concurrency: ${CONCURRENCY} parallel workers | High-Speed Video Compression Enabled!\n`);
+  console.log(`🚀 Found ${videos.length} video(s) in cloud.`);
+  console.log(`⚡ ${CONCURRENCY} parallel workers | CRF 23 visually-lossless compression\n`);
 
-  await runWithConcurrency(videoBlobs, CONCURRENCY, async (blob, i) => {
-    const tag = `[${i + 1}/${videoBlobs.length}] [${path.basename(blob.pathname)}]`;
+  await runPool(videos, CONCURRENCY, async (blob, i) => {
+    const tag = `[${i + 1}/${videos.length}] [${path.basename(blob.pathname)}]`;
     console.log(`${tag} Processing (${formatSize(blob.size)})...`);
 
-    const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const tempInput = path.join('/tmp', `dl_${uniqueId}_input.mp4`);
-    const tempOutput = path.join('/tmp', `opt_${uniqueId}_output.mp4`);
+    const uid = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const tmpIn = path.join('/tmp', `dl_${uid}.mp4`);
+    const tmpOut = path.join('/tmp', `opt_${uid}.mp4`);
 
     try {
-      // 1. Download video from Vercel Blob to /tmp
-      console.log(`${tag} 📥 Downloading from CDN...`);
+      // Download
+      console.log(`${tag} 📥 Downloading...`);
       const res = await fetch(blob.url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const arrayBuffer = await res.arrayBuffer();
-      fs.writeFileSync(tempInput, Buffer.from(arrayBuffer));
+      fs.writeFileSync(tmpIn, Buffer.from(await res.arrayBuffer()));
 
-      // 2. High-speed CPU compression (-preset ultrafast -crf 27) shrinks videos by ~50%-70% in seconds!
+      // Compress (CRF 23 = visually lossless, veryfast = fast + good compression)
+      console.log(`${tag} 🎬 Compressing (CRF 23, veryfast, +faststart)...`);
       try {
-        console.log(`${tag} 🎬 Compressing size & formatting for web (-crf 27 -preset ultrafast)...`);
         execFileSync(ffmpegPath, [
-          '-y',
-          '-i', tempInput,
-          '-vcodec', 'libx264',
-          '-pix_fmt', 'yuv420p',
-          '-crf', '27',
-          '-preset', 'ultrafast',
+          '-y', '-i', tmpIn,
+          '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+          '-crf', '23', '-preset', 'veryfast',
           '-movflags', '+faststart',
-          '-acodec', 'copy',
-          tempOutput
+          '-c:a', 'copy',
+          tmpOut
         ], { stdio: 'ignore' });
-      } catch (encodeErr) {
-        // Fallback to instant container remux if encoding fails
+      } catch {
         execFileSync(ffmpegPath, [
-          '-y',
-          '-i', tempInput,
-          '-c', 'copy',
-          '-movflags', '+faststart',
-          tempOutput
+          '-y', '-i', tmpIn, '-c', 'copy', '-movflags', '+faststart', tmpOut
         ], { stdio: 'ignore' });
       }
 
-      const newSize = fs.statSync(tempOutput).size;
+      const newSize = fs.statSync(tmpOut).size;
 
-      // Safety check: if file didn't shrink, remux instead so filesize is NEVER larger
+      // Safety: never inflate — fall back to remux
       if (newSize >= blob.size) {
-        console.log(`${tag} ✨ Already compact. Formatting for instant web streaming...`);
+        console.log(`${tag} ✨ Already compact. Applying FastStart for web streaming...`);
         execFileSync(ffmpegPath, [
-          '-y',
-          '-i', tempInput,
-          '-c', 'copy',
-          '-movflags', '+faststart',
-          tempOutput
+          '-y', '-i', tmpIn, '-c', 'copy', '-movflags', '+faststart', tmpOut
         ], { stdio: 'ignore' });
       } else {
-        const savedPct = ((1 - newSize / blob.size) * 100).toFixed(1);
-        console.log(`${tag} ✨ Compressed: ${formatSize(blob.size)} -> ${formatSize(newSize)} (${savedPct}% saved!)`);
+        const pct = ((1 - newSize / blob.size) * 100).toFixed(1);
+        console.log(`${tag} ✨ Compressed: ${formatSize(blob.size)} → ${formatSize(newSize)} (${pct}% smaller!)`);
       }
 
-      // 3. Re-upload and overwrite remote blob
-      console.log(`${tag} 📤 Overwriting cloud blob...`);
-      const fileBuffer = fs.readFileSync(tempOutput);
-      await put(blob.pathname, fileBuffer, {
-        access: 'public',
-        addRandomSuffix: false,
-        allowOverwrite: true,
-        contentType: 'video/mp4',
-        token: TOKEN,
+      // Upload
+      console.log(`${tag} 📤 Uploading...`);
+      await put(blob.pathname, fs.readFileSync(tmpOut), {
+        access: 'public', addRandomSuffix: false, allowOverwrite: true,
+        contentType: 'video/mp4', token: TOKEN,
       });
 
-      console.log(`${tag} ✅ Successfully compressed & web-repaired!\n`);
+      console.log(`${tag} ✅ Done!\n`);
     } catch (err: any) {
-      console.error(`${tag} ❌ Failed to process: ${err.message}\n`);
+      console.error(`${tag} ❌ ${err.message}\n`);
     } finally {
-      if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
-      if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
+      if (fs.existsSync(tmpIn)) fs.unlinkSync(tmpIn);
+      if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
     }
   });
 
-  console.log('🎉 All remote videos have been compressed and repaired for web playback!');
+  console.log('🎉 All cloud videos compressed & web-ready!');
 }
 
-optimizeRemoteVideos().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+main().catch(e => { console.error('Fatal:', e); process.exit(1); });
