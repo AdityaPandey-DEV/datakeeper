@@ -1,4 +1,20 @@
-import { list, put, del, copy, head } from '@vercel/blob';
+import { list, put, del, copy } from '@vercel/blob';
+
+/**
+ * Get the Blob token from environment variables.
+ * Supports both BLOB_READ_WRITE_TOKEN and VERCEL_BLOB_READ_WRITE_TOKEN.
+ */
+function getToken(): string {
+  const token =
+    process.env.BLOB_READ_WRITE_TOKEN ||
+    process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
+  if (!token) {
+    throw new Error(
+      'Missing BLOB_READ_WRITE_TOKEN. Please add it to your Vercel project environment variables.'
+    );
+  }
+  return token;
+}
 
 export interface FileItem {
   name: string;
@@ -28,6 +44,7 @@ export async function listFolder(prefix: string): Promise<FileItem[]> {
       prefix: normalizedPrefix,
       cursor,
       limit: 1000,
+      token: getToken(),
     });
 
     for (const blob of response.blobs) {
@@ -94,6 +111,7 @@ export async function uploadFile(
     access: 'public',
     contentType,
     addRandomSuffix: false,
+    token: getToken(),
   });
 
   return { url: blob.url, pathname: blob.pathname };
@@ -103,7 +121,7 @@ export async function uploadFile(
  * Delete a file by its URL.
  */
 export async function deleteFile(url: string): Promise<void> {
-  await del(url);
+  await del(url, { token: getToken() });
 }
 
 /**
@@ -111,7 +129,7 @@ export async function deleteFile(url: string): Promise<void> {
  */
 export async function deleteFiles(urls: string[]): Promise<void> {
   if (urls.length === 0) return;
-  await del(urls);
+  await del(urls, { token: getToken() });
 }
 
 /**
@@ -122,6 +140,7 @@ export async function createFolder(path: string): Promise<void> {
   await put(folderPath + '.keep', new Blob(['']), {
     access: 'public',
     addRandomSuffix: false,
+    token: getToken(),
   });
 }
 
@@ -140,6 +159,7 @@ export async function deleteFolder(prefix: string): Promise<void> {
       prefix: normalizedPrefix,
       cursor,
       limit: 1000,
+      token: getToken(),
     });
 
     for (const blob of response.blobs) {
@@ -153,7 +173,7 @@ export async function deleteFolder(prefix: string): Promise<void> {
   if (urls.length > 0) {
     // Delete in batches of 1000
     for (let i = 0; i < urls.length; i += 1000) {
-      await del(urls.slice(i, i + 1000));
+      await del(urls.slice(i, i + 1000), { token: getToken() });
     }
   }
 }
@@ -168,9 +188,10 @@ export async function moveFile(
   const blob = await copy(sourceUrl, destinationPath, {
     access: 'public',
     addRandomSuffix: false,
+    token: getToken(),
   });
 
-  await del(sourceUrl);
+  await del(sourceUrl, { token: getToken() });
 
   return { url: blob.url, pathname: blob.pathname };
 }
@@ -194,6 +215,7 @@ export async function moveFolder(
       prefix: normalizedSource,
       cursor,
       limit: 1000,
+      token: getToken(),
     });
 
     for (const blob of response.blobs) {
@@ -213,13 +235,14 @@ export async function moveFolder(
     await copy(op.url, op.newPath, {
       access: 'public',
       addRandomSuffix: false,
+      token: getToken(),
     });
   }
 
   // Delete all old files
   const urls = operations.map(op => op.url);
   for (let i = 0; i < urls.length; i += 1000) {
-    await del(urls.slice(i, i + 1000));
+    await del(urls.slice(i, i + 1000), { token: getToken() });
   }
 }
 
@@ -249,7 +272,7 @@ export async function getAllFolders(): Promise<string[]> {
   let hasMore = true;
 
   while (hasMore) {
-    const response = await list({ cursor, limit: 1000 });
+    const response = await list({ cursor, limit: 1000, token: getToken() });
 
     for (const blob of response.blobs) {
       const parts = blob.pathname.split('/');
